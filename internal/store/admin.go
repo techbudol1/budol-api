@@ -126,8 +126,86 @@ type AdminSettlementDetail struct {
 	PayoutAttempts []SettlementPayoutAttempt `json:"payoutAttempts"`
 }
 
+type EngineApp struct {
+	ID               string   `json:"id"`
+	Name             string   `json:"name"`
+	Environment      string   `json:"environment"`
+	Status           string   `json:"status"`
+	AllowedChains    []int64  `json:"allowedChains"`
+	AllowedContracts []string `json:"allowedContracts"`
+	RateLimitPerMin  int64    `json:"rateLimitPerMinute"`
+	CreatedAt        string   `json:"createdAt"`
+	UpdatedAt        string   `json:"updatedAt"`
+}
+
+type EngineAppInput struct {
+	Name             string   `json:"name"`
+	Environment      string   `json:"environment"`
+	AllowedChains    []int64  `json:"allowedChains"`
+	AllowedContracts []string `json:"allowedContracts"`
+	RateLimitPerMin  int64    `json:"rateLimitPerMinute"`
+}
+
+type EngineAPIKey struct {
+	ID             string   `json:"id"`
+	AppID          string   `json:"appId"`
+	AppName        string   `json:"appName,omitempty"`
+	Name           string   `json:"name"`
+	Prefix         string   `json:"prefix"`
+	Scopes         []string `json:"scopes"`
+	AllowedOrigins []string `json:"allowedOrigins"`
+	AllowedIPs     []string `json:"allowedIps"`
+	Status         string   `json:"status"`
+	ExpiresAt      string   `json:"expiresAt,omitempty"`
+	LastUsedAt     string   `json:"lastUsedAt,omitempty"`
+	CreatedAt      string   `json:"createdAt"`
+	RevokedAt      string   `json:"revokedAt,omitempty"`
+}
+
+type EngineAPIKeyInput struct {
+	Name           string   `json:"name"`
+	Scopes         []string `json:"scopes"`
+	AllowedOrigins []string `json:"allowedOrigins"`
+	AllowedIPs     []string `json:"allowedIps"`
+	ExpiresAt      string   `json:"expiresAt"`
+}
+
+type EngineAPIKeySecret struct {
+	Key       EngineAPIKey `json:"key"`
+	Secret    string       `json:"secret"`
+	Plaintext string       `json:"plaintext"`
+}
+
+type EngineAPIKeyVerification struct {
+	App EngineApp    `json:"app"`
+	Key EngineAPIKey `json:"key"`
+}
+
+type EngineAPIUsageInput struct {
+	AppID      string
+	KeyID      string
+	Method     string
+	Path       string
+	StatusCode int
+	IPAddress  string
+	UserAgent  string
+}
+
+type EngineAPIUsage struct {
+	ID         string `json:"id"`
+	AppID      string `json:"appId"`
+	KeyID      string `json:"keyId"`
+	Method     string `json:"method"`
+	Path       string `json:"path"`
+	StatusCode int64  `json:"statusCode"`
+	IPAddress  string `json:"ipAddress"`
+	UserAgent  string `json:"userAgent"`
+	CreatedAt  string `json:"createdAt"`
+}
+
 type AdminStore interface {
 	UserStore
+	EngineStore
 	ListUsers(ctx context.Context) ([]User, error)
 	AdminUserDetail(ctx context.Context, id string) (AdminUserDetail, error)
 	UpdateUser(ctx context.Context, id string, input UserUpdateInput) (User, error)
@@ -169,9 +247,42 @@ type AdminStore interface {
 	UpdateTradeEscrowReconciliation(ctx context.Context, id string, status string, errorMessage string, verifiedAt string, from string, to string, amount float64) (Trade, error)
 	UpdateSettlementPayoutReconciliation(ctx context.Context, pollID string, payoutStatus string, payoutError string, transactionHash string) (Poll, error)
 	ListTrades(ctx context.Context, userID string, pollID string, limit int64) ([]Trade, error)
+	PrivateClaimTree(ctx context.Context, pollID string) (PrivateClaimTree, error)
+	RecordPrivateClaimRoot(ctx context.Context, pollID string, root string, leafCount int64, reason string) (PrivateClaimRootSnapshot, error)
+	PrivateClaimRootHistory(ctx context.Context, pollID string, limit int64) ([]PrivateClaimRootSnapshot, error)
+	ReservePrivateClaim(ctx context.Context, userID string, tradeID string, leaf string, root string, nullifierHash string, zkProofSubmissionID string) (PrivateClaim, Trade, error)
+	RecordPrivateClaimRegistryTransaction(ctx context.Context, userID string, claimID string, transactionID string, registryStatus string, registryError string) (PrivateClaim, Trade, error)
+	CompletePrivateClaimPayout(ctx context.Context, userID string, claimID string, transactionIDs []string, payoutStatus string, payoutError string) (PrivateClaim, Trade, error)
+	CreateShieldedWithdrawal(ctx context.Context, userID string, input ShieldedWithdrawalInput) (ShieldedWithdrawal, error)
+	ListUserShieldedWithdrawals(ctx context.Context, userID string, limit int64) ([]ShieldedWithdrawal, error)
+	ListShieldedWithdrawals(ctx context.Context, status string, limit int64) ([]ShieldedWithdrawal, error)
+	ListDueShieldedWithdrawals(ctx context.Context, limit int64, now time.Time) ([]ShieldedWithdrawal, error)
+	GetShieldedWithdrawal(ctx context.Context, id string) (ShieldedWithdrawal, bool, error)
+	MarkShieldedWithdrawalProcessing(ctx context.Context, id string) (ShieldedWithdrawal, bool, error)
+	CompleteShieldedWithdrawal(ctx context.Context, id string, status string, transactionID string, transactionHash string, errorMessage string) (ShieldedWithdrawal, error)
+	ScheduleShieldedWithdrawalRetry(ctx context.Context, id string, executeAfter time.Time, errorMessage string) (ShieldedWithdrawal, error)
+	RetryAnyShieldedWithdrawal(ctx context.Context, id string, executeAfter time.Time) (ShieldedWithdrawal, error)
+	RetryShieldedWithdrawal(ctx context.Context, userID string, id string, executeAfter time.Time) (ShieldedWithdrawal, error)
+	MarkShieldedWithdrawalSuspicious(ctx context.Context, id string, reason string) (ShieldedWithdrawal, error)
+	RecoverStaleShieldedWithdrawals(ctx context.Context, staleBefore time.Time, executeAfter time.Time, maxAttempts int64) (int64, error)
+	GetSystemSetting(ctx context.Context, key string) (string, bool, error)
+	SetSystemSetting(ctx context.Context, key string, value string) error
 	ListSettlementPayoutAttempts(ctx context.Context, pollID string) ([]SettlementPayoutAttempt, error)
 	ApplyMarketAutomation(ctx context.Context) (int64, error)
 	SeedDefaults(ctx context.Context) error
+}
+
+type EngineStore interface {
+	CreateEngineApp(ctx context.Context, input EngineAppInput) (EngineApp, error)
+	ListEngineApps(ctx context.Context) ([]EngineApp, error)
+	GetEngineApp(ctx context.Context, id string) (EngineApp, bool, error)
+	CreateEngineAPIKey(ctx context.Context, appID string, input EngineAPIKeyInput, prefix string, secretHash string) (EngineAPIKey, error)
+	ListEngineAPIKeys(ctx context.Context, appID string) ([]EngineAPIKey, error)
+	VerifyEngineAPIKey(ctx context.Context, prefix string, secretHash string) (EngineAPIKeyVerification, bool, error)
+	RevokeEngineAPIKey(ctx context.Context, id string) (EngineAPIKey, error)
+	RecordEngineAPIUsage(ctx context.Context, input EngineAPIUsageInput) error
+	ListEngineAPIUsage(ctx context.Context, appID string, limit int64) ([]EngineAPIUsage, error)
+	Close(ctx context.Context) error
 }
 
 var defaultClassifications = []PollClassificationInput{

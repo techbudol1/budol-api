@@ -75,6 +75,10 @@ func (c *Client) ERC20TransferHistory(ctx context.Context, tokenAddress string, 
 		return nil, errors.New("invalid token decimals")
 	}
 
+	if transfers, err := c.alchemyTransferHistory(ctx, tokenAddress, walletAddress, decimals); err == nil {
+		return transfers, nil
+	}
+
 	sentLogs, err := c.transferLogs(ctx, tokenAddress, walletAddress, decimals, "sent")
 	if err != nil {
 		return nil, err
@@ -106,6 +110,31 @@ func (c *Client) ERC20TransferHistory(ctx context.Context, tokenAddress string, 
 		transfers = append(transfers, transfer)
 	}
 
+	sort.Slice(transfers, func(i int, j int) bool {
+		if transfers[i].BlockNumber == transfers[j].BlockNumber {
+			return transfers[i].LogIndex > transfers[j].LogIndex
+		}
+		return transfers[i].BlockNumber > transfers[j].BlockNumber
+	})
+	if len(transfers) > 60 {
+		transfers = transfers[:60]
+	}
+	return transfers, nil
+}
+
+func (c *Client) alchemyTransferHistory(ctx context.Context, tokenAddress string, walletAddress string, decimals int) ([]TokenTransfer, error) {
+	if !strings.Contains(strings.ToLower(c.rpcURL), "alchemy") {
+		return nil, errors.New("alchemy transfer API is not available for this RPC URL")
+	}
+	sentTransfers, err := c.alchemyAssetTransfers(ctx, tokenAddress, walletAddress, decimals, "sent")
+	if err != nil {
+		return nil, err
+	}
+	receivedTransfers, err := c.alchemyAssetTransfers(ctx, tokenAddress, walletAddress, decimals, "received")
+	if err != nil {
+		return nil, err
+	}
+	transfers := append(sentTransfers, receivedTransfers...)
 	sort.Slice(transfers, func(i int, j int) bool {
 		if transfers[i].BlockNumber == transfers[j].BlockNumber {
 			return transfers[i].LogIndex > transfers[j].LogIndex
@@ -364,6 +393,83 @@ func (c *Client) transferLogs(ctx context.Context, tokenAddress string, walletAd
 	return transfers, nil
 }
 
+func (c *Client) alchemyAssetTransfers(ctx context.Context, tokenAddress string, walletAddress string, decimals int, direction string) ([]TokenTransfer, error) {
+	params := map[string]any{
+		"category":          []string{"erc20"},
+		"contractAddresses": []string{tokenAddress},
+		"fromBlock":         "0x0",
+		"maxCount":          "0x3c",
+		"order":             "desc",
+		"toBlock":           "latest",
+		"withMetadata":      true,
+	}
+	if direction == "sent" {
+		params["fromAddress"] = walletAddress
+	} else {
+		params["toAddress"] = walletAddress
+	}
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "alchemy_getAssetTransfers",
+		"params":  []any{params},
+	}
+	var rpcResponse struct {
+		Result struct {
+			Transfers []struct {
+				BlockNum    string `json:"blockNum"`
+				Category    string `json:"category"`
+				From        string `json:"from"`
+				Hash        string `json:"hash"`
+				To          string `json:"to"`
+				UniqueID    string `json:"uniqueId"`
+				RawContract struct {
+					Address string `json:"address"`
+					Value   string `json:"value"`
+				} `json:"rawContract"`
+				Metadata struct {
+					BlockTimestamp string `json:"blockTimestamp"`
+				} `json:"metadata"`
+			} `json:"transfers"`
+		} `json:"result"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := c.rpc(ctx, payload, &rpcResponse); err != nil {
+		return nil, err
+	}
+	if rpcResponse.Error != nil {
+		return nil, fmt.Errorf("Alchemy transfer history failed: %s", rpcResponse.Error.Message)
+	}
+	transfers := make([]TokenTransfer, 0, len(rpcResponse.Result.Transfers))
+	for index, item := range rpcResponse.Result.Transfers {
+		if !strings.EqualFold(item.RawContract.Address, tokenAddress) {
+			continue
+		}
+		value, err := parseHexBigInt(item.RawContract.Value)
+		if err != nil {
+			continue
+		}
+		blockNumber, _ := parseHexUint(item.BlockNum)
+		counterparty := item.From
+		if direction == "sent" {
+			counterparty = item.To
+		}
+		transfers = append(transfers, TokenTransfer{
+			Direction:       direction,
+			Counterparty:    strings.ToLower(counterparty),
+			AmountRaw:       value.String(),
+			Amount:          formatUnits(value, decimals),
+			TransactionHash: item.Hash,
+			BlockNumber:     blockNumber,
+			LogIndex:        uint64(index),
+			Timestamp:       normalizeRPCTimestamp(item.Metadata.BlockTimestamp),
+		})
+	}
+	return transfers, nil
+}
+
 func (c *Client) blockTimestamp(ctx context.Context, blockNumber uint64) (string, error) {
 	payload := map[string]any{
 		"jsonrpc": "2.0",
@@ -441,6 +547,22 @@ func addressFromTopic(topic string) string {
 		return ""
 	}
 	return "0x" + topic[len(topic)-40:]
+}
+
+func normalizeRPCTimestamp(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	parsed, err := time.Parse(time.RFC3339, value)
+	if err == nil {
+		return parsed.UTC().Format(time.RFC3339)
+	}
+	parsed, err = time.Parse("2006-01-02T15:04:05.000Z", value)
+	if err == nil {
+		return parsed.UTC().Format(time.RFC3339)
+	}
+	return value
 }
 
 func parseHexBigInt(value string) (*big.Int, error) {

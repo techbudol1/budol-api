@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -11,6 +12,8 @@ import (
 
 	"budol/server/internal/config"
 	"budol/server/internal/evm"
+	"budol/server/internal/gmrengine"
+	"budol/server/internal/privy"
 	"budol/server/internal/session"
 	"budol/server/internal/store"
 	"budol/server/internal/thirdweb"
@@ -24,16 +27,23 @@ import (
 )
 
 type Server struct {
-	cfg      config.Config
-	evm      *evm.Client
-	store    store.AdminStore
-	thirdweb *thirdweb.Client
-	sessions session.Manager
+	cfg           config.Config
+	engineLimiter *engineRateLimiter
+	evm           *evm.Client
+	gmrEngine     *gmrengine.Client
+	privy         *privy.Client
+	store         store.AdminStore
+	thirdweb      *thirdweb.Client
+	sessions      session.Manager
 }
 
 type ThirdwebLoginRequest struct {
 	AuthToken  string          `json:"authToken"`
 	AuthResult json.RawMessage `json:"authResult"`
+}
+
+type PrivyLoginRequest struct {
+	AccessToken string `json:"accessToken"`
 }
 
 type AdminLoginRequest struct {
@@ -63,10 +73,11 @@ type WalletBurnRequest struct {
 }
 
 type TradeRequest struct {
-	PollID       string  `json:"pollId"`
-	Side         string  `json:"side"`
-	Amount       float64 `json:"amount"`
-	EscrowTxHash string  `json:"escrowTxHash"`
+	PollID           string  `json:"pollId"`
+	Side             string  `json:"side"`
+	Amount           float64 `json:"amount"`
+	EscrowTxHash     string  `json:"escrowTxHash"`
+	PrivateClaimLeaf string  `json:"privateClaimLeaf"`
 }
 
 type CashoutRequest struct {
@@ -124,13 +135,16 @@ const transferConfirmText = "CONFIRM TRANSFER"
 const airdropConfirmText = "CONFIRM AIRDROP"
 const burnConfirmText = "CONFIRM BURN"
 
-func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb.Client, sessions session.Manager) *fiber.App {
+func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb.Client, gmrEngineClient *gmrengine.Client, sessions session.Manager) *fiber.App {
 	server := Server{
-		cfg:      cfg,
-		evm:      evm.NewClient(cfg.ArbitrumSepoliaRPCURL),
-		store:    userStore,
-		thirdweb: thirdwebClient,
-		sessions: sessions,
+		cfg:           cfg,
+		engineLimiter: newEngineRateLimiter(),
+		evm:           evm.NewClient(cfg.ArbitrumSepoliaRPCURL),
+		gmrEngine:     gmrEngineClient,
+		privy:         privy.NewClient(cfg.PrivyAPIBase, cfg.PrivyAppID, cfg.PrivyAppSecret, cfg.PrivyVerificationKey),
+		store:         userStore,
+		thirdweb:      thirdwebClient,
+		sessions:      sessions,
 	}
 
 	app := fiber.New(fiber.Config{
@@ -153,6 +167,13 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 		return c.JSON(fiber.Map{"ok": true})
 	})
 
+	workerCtx, stopWorkers := context.WithCancel(context.Background())
+	app.Hooks().OnShutdown(func() error {
+		stopWorkers()
+		return nil
+	})
+	server.startShieldedWithdrawalWorker(workerCtx)
+
 	api := app.Group("/api")
 	authRateLimit := limiter.New(limiter.Config{
 		Max:        20,
@@ -169,12 +190,16 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 	api.Get("/auth/social/:provider", server.startSocialAuth)
 	api.Get("/auth/social/callback", server.socialAuthCallback)
 	api.Post("/auth/thirdweb", authRateLimit, server.loginWithThirdweb)
+	api.Post("/auth/privy", authRateLimit, server.loginWithPrivy)
 	api.Get("/auth/me", server.me)
 	api.Post("/auth/logout", server.logout)
 	api.Get("/polls", server.publicPolls)
 	api.Get("/polls/:slug/activity", server.publicPollActivity)
 	api.Get("/polls/:slug/stats", server.publicPollStats)
 	api.Get("/polls/:slug/comments", server.publicPollComments)
+	api.Get("/polls/:slug/private-claim-tree", server.pollPrivateClaimTree)
+	api.Get("/zk/private-claim/:file", server.privateClaimArtifact)
+	api.Get("/zk/shielded-withdrawal/:file", server.shieldedWithdrawalArtifact)
 	api.Post("/polls/:slug/comments", server.createPollComment)
 	api.Post("/comments/:id/report", server.reportPollComment)
 	api.Get("/polls/:slug", server.publicPollDetail)
@@ -183,12 +208,20 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 	api.Post("/trades", tradeRateLimit, server.createTrade)
 	api.Get("/cashout-quote", server.cashoutQuote)
 	api.Post("/cashouts", server.cashoutPosition)
+	api.Get("/private-claims/shielded-config", server.privateClaimShieldedPayoutConfig)
+	api.Post("/private-claims/shielded-withdrawal-proofs", tradeRateLimit, server.submitShieldedWithdrawalProof)
+	api.Get("/private-claims/shielded-withdrawals", server.listShieldedWithdrawals)
+	api.Post("/private-claims/shielded-withdrawals", tradeRateLimit, server.withdrawShieldedPayout)
+	api.Post("/private-claims/shielded-withdrawals/:id/retry", tradeRateLimit, server.retryShieldedWithdrawal)
+	api.Post("/private-claims/proof-submissions", tradeRateLimit, server.submitPrivateClaimProof)
+	api.Post("/private-claims", tradeRateLimit, server.claimPrivatePayout)
 	api.Get("/notifications", server.notifications)
 	api.Post("/notifications/read-all", server.markAllNotificationsRead)
 	api.Post("/notifications/:id/read", server.markNotificationRead)
 	api.Get("/watchlist", server.watchlist)
 	api.Post("/watchlist", server.addWatchlist)
 	api.Delete("/watchlist/:slug", server.removeWatchlist)
+	api.Get("/wallet/balance", server.walletBalance)
 	api.Get("/wallet/history", server.walletHistory)
 
 	api.Post("/admin/auth/login", authRateLimit, server.adminLogin)
@@ -214,10 +247,28 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 	admin.Get("/activity", server.adminActivity)
 	admin.Get("/comments", server.adminComments)
 	admin.Patch("/comments/:id", server.adminModerateComment)
+	admin.Get("/shielded-withdrawals", server.adminShieldedWithdrawals)
+	admin.Post("/shielded-withdrawals/:id/retry", adminMutationRateLimit, server.adminRetryShieldedWithdrawal)
+	admin.Post("/shielded-withdrawals/:id/process", adminMutationRateLimit, server.adminProcessShieldedWithdrawal)
+	admin.Post("/shielded-withdrawals/:id/suspicious", adminMutationRateLimit, server.adminMarkShieldedWithdrawalSuspicious)
+	admin.Get("/shielded-withdrawals/queue", server.adminShieldedWithdrawalQueue)
+	admin.Post("/shielded-withdrawals/queue/pause", adminMutationRateLimit, server.adminPauseShieldedWithdrawalQueue)
+	admin.Post("/shielded-withdrawals/queue/resume", adminMutationRateLimit, server.adminResumeShieldedWithdrawalQueue)
 	admin.Get("/wallet", server.adminWalletConfig)
 	admin.Post("/wallet/transfer", adminMutationRateLimit, server.adminWalletTransfer)
 	admin.Post("/wallet/airdrop", adminMutationRateLimit, server.adminWalletAirdrop)
 	admin.Post("/wallet/burn", adminMutationRateLimit, server.adminWalletBurn)
+	admin.Get("/engine/apps", server.adminEngineApps)
+	admin.Post("/engine/apps", adminMutationRateLimit, server.adminCreateEngineApp)
+	admin.Get("/engine/apps/:id", server.adminEngineApp)
+	admin.Post("/engine/apps/:id/api-keys", adminMutationRateLimit, server.adminCreateEngineAPIKey)
+	admin.Get("/engine/apps/:id/api-keys", server.adminEngineAPIKeys)
+	admin.Get("/engine/apps/:id/usage", server.adminEngineUsage)
+	admin.Post("/engine/api-keys/:id/revoke", adminMutationRateLimit, server.adminRevokeEngineAPIKey)
+	admin.Post("/engine/api-keys/:id/rotate", adminMutationRateLimit, server.adminRotateEngineAPIKey)
+
+	engine := api.Group("/engine", server.requireEngineScope("transactions:read"))
+	engine.Get("/auth/me", server.engineAuthMe)
 
 	return app
 }
@@ -234,6 +285,35 @@ func (s Server) loginWithThirdweb(c *fiber.Ctx) error {
 	}
 
 	user, err := s.verifyAndLogin(c, authToken)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(fiber.Map{
+		"user": user,
+	})
+}
+
+func (s Server) loginWithPrivy(c *fiber.Ctx) error {
+	var request PrivyLoginRequest
+	if err := c.BodyParser(&request); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
+	}
+	if strings.TrimSpace(request.AccessToken) == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "missing Privy access token")
+	}
+
+	claims, err := s.privy.VerifyAccessToken(request.AccessToken)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid Privy login: "+err.Error())
+	}
+
+	identity, err := s.privy.UserIdentity(c.Context(), claims.UserID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusUnauthorized, "invalid Privy user: "+err.Error())
+	}
+
+	user, err := s.verifyAndLoginPrivy(c, identity)
 	if err != nil {
 		return err
 	}
@@ -301,6 +381,46 @@ func (s Server) verifyAndLogin(c *fiber.Ctx, authToken string) (store.User, erro
 	})
 
 	return user, nil
+}
+
+func (s Server) verifyAndLoginPrivy(c *fiber.Ctx, identity store.PrivyIdentity) (store.User, error) {
+	user, err := s.store.UpsertFromPrivy(c.Context(), identity)
+	if err != nil {
+		return store.User{}, fiber.NewError(fiber.StatusInternalServerError, "failed to save Privy user")
+	}
+	s.registerEngineUserWallet(c, user, identity)
+	s.grantWelcomeTokens(c, user)
+	_, _ = s.store.CreateNotification(c.Context(), user.ID, "login", "Login successful", "Your Budol session is active on this browser.", "/account")
+
+	token, err := s.sessions.Issue(user)
+	if err != nil {
+		return store.User{}, fiber.NewError(fiber.StatusInternalServerError, "failed to issue session")
+	}
+
+	c.Cookie(&fiber.Cookie{
+		Name:     s.cfg.SessionCookieName,
+		Value:    token,
+		Expires:  time.Now().UTC().Add(s.sessions.TTL()),
+		HTTPOnly: true,
+		SameSite: fiber.CookieSameSiteLaxMode,
+		Secure:   s.cfg.IsProduction(),
+		Path:     "/",
+	})
+
+	return user, nil
+}
+
+func (s Server) registerEngineUserWallet(c *fiber.Ctx, user store.User, identity store.PrivyIdentity) {
+	if s.gmrEngine == nil || !s.gmrEngine.Configured() {
+		return
+	}
+	_ = s.gmrEngine.UpsertUserWallet(c.Context(), gmrengine.UserWalletRequest{
+		Address:      user.WalletAddress,
+		AuthProvider: firstNonEmpty(identity.AuthProvider, user.AuthProvider),
+		Email:        firstNonEmpty(identity.Email, user.Email),
+		Metadata:     identity.RawJSON,
+		UserID:       user.ID,
+	})
 }
 
 func (s Server) me(c *fiber.Ctx) error {
@@ -373,12 +493,18 @@ func (s Server) grantWelcomeTokens(c *fiber.Ctx, user store.User) {
 		return
 	}
 
-	result, err := s.thirdweb.SendToken(c.Context(), thirdweb.SendTokenRequest{
-		ChainID:      s.cfg.WelcomeTokenChainID,
-		From:         s.cfg.ProjectWallet,
-		Recipient:    user.WalletAddress,
-		TokenAddress: s.cfg.WelcomeTokenContract,
-		Quantity:     quantity,
+	if s.gmrEngine == nil || !s.gmrEngine.Configured() {
+		_, _ = s.store.UpdateTokenGrantStatus(c.Context(), grant.ID, "failed", nil, "GMR Engine is not configured")
+		_, _ = s.store.CreateNotification(c.Context(), user.ID, "welcome_tokens", "Welcome token grant pending", "Budol could not send the welcome tokens because the engine key is not configured.", "/wallet")
+		return
+	}
+
+	result, err := s.gmrEngine.TransferERC20(c.Context(), gmrengine.TransferRequest{
+		Amount:          s.cfg.WelcomeTokenAmount,
+		ChainID:         s.cfg.WelcomeTokenChainID,
+		ContractAddress: s.cfg.WelcomeTokenContract,
+		Decimals:        s.cfg.WelcomeTokenDecimals,
+		Recipient:       user.WalletAddress,
 	})
 	if err != nil {
 		_, _ = s.store.UpdateTokenGrantStatus(c.Context(), grant.ID, "failed", nil, err.Error())
@@ -386,11 +512,8 @@ func (s Server) grantWelcomeTokens(c *fiber.Ctx, user store.User) {
 		return
 	}
 
-	status, errorMessage := s.waitForThirdwebTransactionStatus(c, result.TransactionIDs)
-	_, _ = s.store.UpdateTokenGrantStatus(c.Context(), grant.ID, status, result.TransactionIDs, errorMessage)
-	if status == "confirmed" || status == "submitted" {
-		_, _ = s.store.CreateNotification(c.Context(), user.ID, "welcome_tokens", "Welcome tokens received", s.cfg.WelcomeTokenAmount+" BUDOL welcome tokens were sent to your wallet.", "/wallet")
-	}
+	_, _ = s.store.UpdateTokenGrantStatus(c.Context(), grant.ID, "sent", result.TransactionIDs, "")
+	_, _ = s.store.CreateNotification(c.Context(), user.ID, "welcome_tokens", "Welcome tokens received", s.cfg.WelcomeTokenAmount+" BUDOL welcome tokens were sent to your wallet.", "/wallet")
 }
 
 func (s Server) adminLogin(c *fiber.Ctx) error {
@@ -553,6 +676,9 @@ func (s Server) createTrade(c *fiber.Ctx) error {
 	if err := c.BodyParser(&request); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 	}
+	if _, ok := fieldElement(request.PrivateClaimLeaf); !ok {
+		return fiber.NewError(fiber.StatusBadRequest, "privateClaimLeaf is required")
+	}
 	escrow, err := s.verifyTradeEscrow(c, user, request)
 	if err != nil {
 		return err
@@ -568,10 +694,12 @@ func (s Server) createTrade(c *fiber.Ctx) error {
 		EscrowFrom:       escrow.From,
 		EscrowTo:         escrow.To,
 		EscrowAmount:     escrow.Amount,
+		PrivateClaimLeaf: strings.TrimSpace(request.PrivateClaimLeaf),
 	})
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
+	s.recordPrivateClaimRootForPoll(c.Context(), trade.PollID, "trade_created")
 	_, _ = s.store.CreateNotification(c.Context(), user.ID, "trade", "Trade placed", trade.PollTitle+": bought "+trade.OutcomeLabel+" for "+settlementAmountString(trade.Amount)+" BUDOL.", "/markets/"+trade.PollSlug)
 	watchDetail := trade.PollTitle + ": " + trade.OutcomeLabel + " traded at " + strconv.FormatInt(trade.PriceCents, 10) + "c."
 	_, _ = s.store.NotifyWatchers(c.Context(), trade.PollSlug, user.ID, "watchlist_trade", "Watched market moved", watchDetail, "/markets/"+trade.PollSlug)
@@ -768,6 +896,7 @@ func (s Server) notifications(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	_ = s.syncWalletTransferNotifications(c, user)
 	notifications, err := s.store.ListNotifications(c.Context(), user.ID)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to load notifications")
@@ -845,6 +974,42 @@ func (s Server) removeWatchlist(c *fiber.Ctx) error {
 	return c.JSON(fiber.Map{"watchlist": items})
 }
 
+func (s Server) walletBalance(c *fiber.Ctx) error {
+	user, err := s.authenticatedUser(c)
+	if err != nil {
+		return err
+	}
+	balance, err := s.evm.ERC20Balance(c.Context(), s.cfg.WelcomeTokenContract, user.WalletAddress, s.cfg.WelcomeTokenDecimals)
+	if err != nil && s.gmrEngine != nil && s.gmrEngine.Configured() {
+		engineBalance, engineErr := s.gmrEngine.ERC20Balance(c.Context(), s.cfg.WelcomeTokenChainID, s.cfg.WelcomeTokenContract, user.WalletAddress)
+		if engineErr == nil {
+			return c.JSON(fiber.Map{
+				"balance": fiber.Map{
+					"raw":           engineBalance.OwnedBalanceRaw,
+					"formatted":     engineBalance.OwnedBalance,
+					"decimals":      engineBalance.Decimals,
+					"walletAddress": engineBalance.WalletAddress,
+					"tokenAddress":  engineBalance.ContractAddress,
+					"fetchedAt":     time.Now().UTC().Format(time.RFC3339),
+				},
+			})
+		}
+	}
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadGateway, "failed to load wallet balance")
+	}
+	return c.JSON(fiber.Map{
+		"balance": fiber.Map{
+			"raw":           balance.Raw,
+			"formatted":     balance.Formatted,
+			"decimals":      balance.Decimals,
+			"walletAddress": balance.WalletAddress,
+			"tokenAddress":  balance.TokenAddress,
+			"fetchedAt":     balance.FetchedAt,
+		},
+	})
+}
+
 func (s Server) walletHistory(c *fiber.Ctx) error {
 	user, err := s.authenticatedUser(c)
 	if err != nil {
@@ -852,11 +1017,55 @@ func (s Server) walletHistory(c *fiber.Ctx) error {
 	}
 	transfers, err := s.evm.ERC20TransferHistory(c.Context(), s.cfg.WelcomeTokenContract, user.WalletAddress, s.cfg.WelcomeTokenDecimals)
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadGateway, "failed to load wallet history")
+		return c.JSON(fiber.Map{
+			"transfers": []evm.TokenTransfer{},
+			"warning":   "wallet history is temporarily unavailable",
+		})
 	}
+	_ = s.createReceivedTransferNotifications(c, user, transfers)
 	return c.JSON(fiber.Map{
 		"transfers": transfers,
 	})
+}
+
+func (s Server) syncWalletTransferNotifications(c *fiber.Ctx, user store.User) error {
+	transfers, err := s.evm.ERC20TransferHistory(c.Context(), s.cfg.WelcomeTokenContract, user.WalletAddress, s.cfg.WelcomeTokenDecimals)
+	if err != nil {
+		return err
+	}
+	return s.createReceivedTransferNotifications(c, user, transfers)
+}
+
+func (s Server) createReceivedTransferNotifications(c *fiber.Ctx, user store.User, transfers []evm.TokenTransfer) error {
+	existing, err := s.store.ListNotifications(c.Context(), user.ID)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, notification := range existing {
+		if notification.Kind == "wallet_received" {
+			seen[walletTransferNotificationLink(notification.Link)] = true
+		}
+	}
+	for _, transfer := range transfers {
+		if transfer.Direction != "received" || strings.TrimSpace(transfer.TransactionHash) == "" {
+			continue
+		}
+		link := walletTransferLink(transfer.TransactionHash)
+		if seen[link] {
+			continue
+		}
+		_, _ = s.store.CreateNotification(
+			c.Context(),
+			user.ID,
+			"wallet_received",
+			"BUDOL received",
+			transfer.Amount+" BUDOL arrived in your wallet from "+shortAddressForAdmin(transfer.Counterparty)+".",
+			link,
+		)
+		seen[link] = true
+	}
+	return nil
 }
 
 func (s Server) adminUpdateUser(c *fiber.Ctx) error {
@@ -1032,12 +1241,7 @@ func (s Server) adminResolvePoll(c *fiber.Ctx) error {
 		payoutStatus := "none"
 		payoutError := ""
 		if preview.PayoutRequired > 0 {
-			result, err := s.sendSettlementPayouts(c, preview)
-			if err != nil {
-				return err
-			}
-			transactionIDs = result.TransactionIDs
-			payoutStatus, payoutError = s.waitForThirdwebTransactionStatus(c, transactionIDs)
+			payoutStatus = "claimable"
 		}
 
 		poll, err := s.store.UpdatePollResolution(c.Context(), c.Params("id"), request.Status, request.Outcome, s.adminActor(c), request.ResolutionSource, request.ResolutionEvidenceURL, request.ResolutionNotes)
@@ -1048,6 +1252,7 @@ func (s Server) adminResolvePoll(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusInternalServerError, "failed to record settlement")
 		}
+		s.acceptPrivateClaimRegistryRoot(c.Context(), poll.ID, request.Status, request.Outcome)
 		s.notifySettlementRecipients(c, settlement, payoutStatus)
 		_, _ = s.store.CreateAdminActivity(c.Context(), store.AdminActivityInput{
 			Actor:      s.adminActor(c),
@@ -1349,8 +1554,8 @@ func (s Server) requireWalletConfig() error {
 	if s.cfg.WelcomeTokenDecimals < 0 {
 		return errors.New("token decimals are invalid")
 	}
-	if strings.TrimSpace(s.cfg.ThirdwebSendURL) == "" {
-		return errors.New("thirdweb send URL is not configured")
+	if s.gmrEngine == nil || !s.gmrEngine.Configured() {
+		return errors.New("GMR Engine is not configured")
 	}
 	return nil
 }
@@ -1363,7 +1568,7 @@ func (s Server) sendWalletTokens(c *fiber.Ctx, inputs []walletRecipientInput) (t
 		return thirdweb.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadRequest, "add at least one recipient")
 	}
 
-	recipients := make([]thirdweb.TokenRecipient, 0, len(inputs))
+	transactionIDs := []string{}
 	totalQuantity := ""
 	for _, input := range inputs {
 		address := strings.TrimSpace(input.Address)
@@ -1377,22 +1582,19 @@ func (s Server) sendWalletTokens(c *fiber.Ctx, inputs []walletRecipientInput) (t
 		if totalQuantity == "" {
 			totalQuantity = quantity
 		}
-		recipients = append(recipients, thirdweb.TokenRecipient{
-			Address:  address,
-			Quantity: quantity,
+		result, err := s.gmrEngine.TransferERC20(c.Context(), gmrengine.TransferRequest{
+			Amount:          input.Amount,
+			ChainID:         s.cfg.WelcomeTokenChainID,
+			ContractAddress: s.cfg.WelcomeTokenContract,
+			Decimals:        s.cfg.WelcomeTokenDecimals,
+			Recipient:       address,
 		})
+		if err != nil {
+			return thirdweb.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadGateway, err.Error())
+		}
+		transactionIDs = append(transactionIDs, result.TransactionIDs...)
 	}
-
-	result, err := s.thirdweb.SendToken(c.Context(), thirdweb.SendTokenRequest{
-		ChainID:      s.cfg.WelcomeTokenChainID,
-		From:         s.cfg.ProjectWallet,
-		TokenAddress: s.cfg.WelcomeTokenContract,
-		Recipients:   recipients,
-	})
-	if err != nil {
-		return thirdweb.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadGateway, err.Error())
-	}
-	return result, totalQuantity, nil
+	return thirdweb.SendTokenResult{TransactionIDs: transactionIDs}, totalQuantity, nil
 }
 
 func (s Server) sendSettlementPayouts(c *fiber.Ctx, preview store.SettlementPreview) (thirdweb.SendTokenResult, error) {
@@ -1526,6 +1728,22 @@ func walletActionResponse(action string, recipientCount int, quantity string, re
 		"recipientCount": recipientCount,
 		"transactionIds": result.TransactionIDs,
 	}
+}
+
+func walletTransferLink(transactionHash string) string {
+	transactionHash = strings.TrimSpace(transactionHash)
+	if transactionHash == "" {
+		return "/wallet"
+	}
+	return "https://sepolia.arbiscan.io/tx/" + transactionHash
+}
+
+func walletTransferNotificationLink(link string) string {
+	link = strings.TrimSpace(link)
+	if link == "" {
+		return ""
+	}
+	return link
 }
 
 func (s Server) callbackURL() string {

@@ -26,6 +26,7 @@ func loadDotEnv(paths ...string) {
 
 			key = strings.TrimSpace(key)
 			value = strings.Trim(strings.TrimSpace(value), `"'`)
+			value = strings.ReplaceAll(value, `\n`, "\n")
 			if key != "" && os.Getenv(key) == "" {
 				_ = os.Setenv(key, value)
 			}

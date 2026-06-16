@@ -26,6 +26,7 @@ type TradeInput struct {
 	EscrowFrom       string  `json:"escrowFrom"`
 	EscrowTo         string  `json:"escrowTo"`
 	EscrowAmount     float64 `json:"escrowAmount"`
+	PrivateClaimLeaf string  `json:"privateClaimLeaf"`
 }
 
 type TradeQuote struct {
@@ -72,34 +73,39 @@ type marketMakerState struct {
 }
 
 type Trade struct {
-	ID                   string   `json:"id"`
-	UserID               string   `json:"userId"`
-	UserWalletAddress    string   `json:"userWalletAddress"`
-	PollID               string   `json:"pollId"`
-	PollSlug             string   `json:"pollSlug"`
-	PollTitle            string   `json:"pollTitle"`
-	Side                 string   `json:"side"`
-	OutcomeLabel         string   `json:"outcomeLabel"`
-	PriceCents           int64    `json:"priceCents"`
-	Amount               float64  `json:"amount"`
-	Shares               float64  `json:"shares"`
-	PotentialPayout      float64  `json:"potentialPayout"`
-	Status               string   `json:"status"`
-	EscrowTxHash         string   `json:"escrowTxHash"`
-	EscrowStatus         string   `json:"escrowStatus"`
-	EscrowVerifiedAt     string   `json:"escrowVerifiedAt"`
-	EscrowFrom           string   `json:"escrowFrom"`
-	EscrowTo             string   `json:"escrowTo"`
-	EscrowAmount         float64  `json:"escrowAmount"`
-	EscrowError          string   `json:"escrowError"`
-	SettlementStatus     string   `json:"settlementStatus"`
-	SettlementOutcome    string   `json:"settlementOutcome"`
-	SettlementPayout     float64  `json:"settlementPayout"`
-	PayoutStatus         string   `json:"payoutStatus"`
-	PayoutError          string   `json:"payoutError"`
-	PayoutTransactionIDs []string `json:"payoutTransactionIds"`
-	SettledAt            string   `json:"settledAt"`
-	CreatedAt            string   `json:"createdAt"`
+	ID                    string   `json:"id"`
+	UserID                string   `json:"userId"`
+	UserWalletAddress     string   `json:"userWalletAddress"`
+	PollID                string   `json:"pollId"`
+	PollSlug              string   `json:"pollSlug"`
+	PollTitle             string   `json:"pollTitle"`
+	Side                  string   `json:"side"`
+	OutcomeLabel          string   `json:"outcomeLabel"`
+	PriceCents            int64    `json:"priceCents"`
+	Amount                float64  `json:"amount"`
+	Shares                float64  `json:"shares"`
+	PotentialPayout       float64  `json:"potentialPayout"`
+	Status                string   `json:"status"`
+	EscrowTxHash          string   `json:"escrowTxHash"`
+	EscrowStatus          string   `json:"escrowStatus"`
+	EscrowVerifiedAt      string   `json:"escrowVerifiedAt"`
+	EscrowFrom            string   `json:"escrowFrom"`
+	EscrowTo              string   `json:"escrowTo"`
+	EscrowAmount          float64  `json:"escrowAmount"`
+	EscrowError           string   `json:"escrowError"`
+	SettlementStatus      string   `json:"settlementStatus"`
+	SettlementOutcome     string   `json:"settlementOutcome"`
+	SettlementPayout      float64  `json:"settlementPayout"`
+	PayoutStatus          string   `json:"payoutStatus"`
+	PayoutError           string   `json:"payoutError"`
+	PayoutTransactionIDs  []string `json:"payoutTransactionIds"`
+	PrivateClaimLeaf      string   `json:"privateClaimLeaf"`
+	PrivateClaimLeafIndex int64    `json:"privateClaimLeafIndex"`
+	PrivateClaimRoot      string   `json:"privateClaimRoot"`
+	PrivateClaimNullifier string   `json:"privateClaimNullifierHash"`
+	PrivateClaimID        string   `json:"privateClaimId"`
+	SettledAt             string   `json:"settledAt"`
+	CreatedAt             string   `json:"createdAt"`
 }
 
 type Position struct {
@@ -224,6 +230,105 @@ type SettlementPayoutAttempt struct {
 	CreatedAt      string   `json:"createdAt"`
 }
 
+type PrivateClaimNote struct {
+	Amount        string `json:"amount"`
+	Leaf          string `json:"leaf"`
+	MarketID      string `json:"marketId"`
+	NullifierHash string `json:"nullifierHash"`
+	Outcome       string `json:"outcome"`
+	Secret        string `json:"secret"`
+	UserSalt      string `json:"userSalt"`
+	Version       string `json:"version"`
+}
+
+type PrivateClaimTree struct {
+	PollID      string                     `json:"pollId"`
+	PollSlug    string                     `json:"pollSlug"`
+	PollTitle   string                     `json:"pollTitle"`
+	Root        string                     `json:"root"`
+	Leaves      []string                   `json:"leaves"`
+	LeafIndexes []int64                    `json:"leafIndexes"`
+	LeafCount   int64                      `json:"leafCount"`
+	RootHistory []PrivateClaimRootSnapshot `json:"rootHistory"`
+}
+
+type PrivateClaimRootSnapshot struct {
+	ID         string `json:"id"`
+	PollID     string `json:"pollId"`
+	Root       string `json:"root"`
+	LeafCount  int64  `json:"leafCount"`
+	Reason     string `json:"reason"`
+	CreatedAt  string `json:"createdAt"`
+	LastSeenAt string `json:"lastSeenAt"`
+}
+
+type PrivateClaim struct {
+	ID                    string   `json:"id"`
+	UserID                string   `json:"userId"`
+	TradeID               string   `json:"tradeId"`
+	PollID                string   `json:"pollId"`
+	PollSlug              string   `json:"pollSlug"`
+	PollTitle             string   `json:"pollTitle"`
+	WalletAddress         string   `json:"walletAddress"`
+	Leaf                  string   `json:"leaf"`
+	Root                  string   `json:"root"`
+	NullifierHash         string   `json:"nullifierHash"`
+	ZKProofSubmissionID   string   `json:"zkProofSubmissionId"`
+	RegistryTransactionID string   `json:"registryTransactionId"`
+	RegistryStatus        string   `json:"registryStatus"`
+	RegistryError         string   `json:"registryError"`
+	Amount                float64  `json:"amount"`
+	Status                string   `json:"status"`
+	PayoutStatus          string   `json:"payoutStatus"`
+	PayoutError           string   `json:"payoutError"`
+	TransactionIDs        []string `json:"transactionIds"`
+	CreatedAt             string   `json:"createdAt"`
+	UpdatedAt             string   `json:"updatedAt"`
+}
+
+type ShieldedWithdrawalInput struct {
+	Denomination         string
+	Mode                 string
+	NoteCommitment       string
+	NullifierHash        string
+	PoolAddress          string
+	PublicSignals        string
+	Recipient            string
+	Relayer              string
+	RelayerFee           string
+	SolidityProof        string
+	ZKProofSubmissionID  string
+	ZKProofSubmissionRef string
+	ExecuteAfter         time.Time
+}
+
+type ShieldedWithdrawal struct {
+	ID                   string `json:"id"`
+	UserID               string `json:"userId"`
+	UserEmail            string `json:"userEmail,omitempty"`
+	UserWalletAddress    string `json:"userWalletAddress,omitempty"`
+	Denomination         string `json:"denomination,omitempty"`
+	Mode                 string `json:"mode"`
+	NoteCommitment       string `json:"noteCommitment"`
+	NullifierHash        string `json:"nullifierHash"`
+	PoolAddress          string `json:"poolAddress,omitempty"`
+	PublicSignals        string `json:"publicSignals,omitempty"`
+	Recipient            string `json:"recipient"`
+	Relayer              string `json:"relayer"`
+	RelayerFee           string `json:"relayerFee"`
+	SolidityProof        string `json:"-"`
+	ZKProofSubmissionID  string `json:"zkProofSubmissionId,omitempty"`
+	ZKProofSubmissionRef string `json:"zkProofSubmissionRef,omitempty"`
+	Status               string `json:"status"`
+	Error                string `json:"error,omitempty"`
+	TransactionID        string `json:"transactionId,omitempty"`
+	TransactionHash      string `json:"transactionHash,omitempty"`
+	ExecuteAfter         string `json:"executeAfter"`
+	Attempts             int64  `json:"attempts"`
+	CreatedAt            string `json:"createdAt"`
+	UpdatedAt            string `json:"updatedAt"`
+}
+
 func (s *MemgraphUserStore) CreateTrade(ctx context.Context, user User, input TradeInput) (Trade, error) {
 	side := strings.ToLower(strings.TrimSpace(input.Side))
 	if err := validateTradeInput(input.PollID, side, input.Amount); err != nil {
@@ -299,6 +404,7 @@ RETURN count(t) AS used
 			"escrowTo":         strings.ToLower(strings.TrimSpace(input.EscrowTo)),
 			"escrowAmount":     roundMoney(input.EscrowAmount),
 			"escrowError":      "",
+			"privateClaimLeaf": strings.TrimSpace(input.PrivateClaimLeaf),
 			"outcomeLabel":     quote.OutcomeLabel,
 			"priceCents":       quote.AveragePriceCents,
 			"spotPriceCents":   quote.SpotPriceCents,
@@ -340,6 +446,10 @@ CREATE (t:Trade {
   escrowTo: $escrowTo,
   escrowAmount: $escrowAmount,
   escrowError: $escrowError,
+  privateClaimLeaf: $privateClaimLeaf,
+  privateClaimRoot: "",
+  privateClaimNullifierHash: "",
+  privateClaimId: "",
   shares: $shares,
   potentialPayout: $potentialPayout,
   priceImpactCents: $priceImpactCents,
@@ -349,6 +459,11 @@ CREATE (t:Trade {
 })
 MERGE (u)-[:PLACED_TRADE]->(t)
 MERGE (t)-[:ON_POLL]->(p)
+WITH u, p, t
+OPTIONAL MATCH (existing:Trade)-[:ON_POLL]->(p)
+WHERE existing.id <> t.id AND coalesce(existing.privateClaimLeaf, "") <> ""
+WITH u, p, t, max(coalesce(existing.privateClaimLeafIndex, -1)) AS maxLeafIndex
+SET t.privateClaimLeafIndex = CASE WHEN coalesce(t.privateClaimLeaf, "") = "" THEN -1 ELSE maxLeafIndex + 1 END
 RETURN
   t.id AS id,
   t.userId AS userId,
@@ -376,6 +491,11 @@ RETURN
   coalesce(t.payoutStatus, "") AS payoutStatus,
   coalesce(t.payoutError, "") AS payoutError,
   coalesce(t.payoutTransactionIds, []) AS payoutTransactionIds,
+  coalesce(t.privateClaimLeaf, "") AS privateClaimLeaf,
+  coalesce(t.privateClaimLeafIndex, -1) AS privateClaimLeafIndex,
+  coalesce(t.privateClaimRoot, "") AS privateClaimRoot,
+  coalesce(t.privateClaimNullifierHash, "") AS privateClaimNullifierHash,
+  coalesce(t.privateClaimId, "") AS privateClaimId,
   coalesce(t.settledAt, "") AS settledAt,
   t.createdAt AS createdAt
 `, writeParams)
@@ -890,6 +1010,11 @@ RETURN
   coalesce(t.payoutStatus, "") AS payoutStatus,
   coalesce(t.payoutError, "") AS payoutError,
   coalesce(t.payoutTransactionIds, []) AS payoutTransactionIds,
+  coalesce(t.privateClaimLeaf, "") AS privateClaimLeaf,
+  coalesce(t.privateClaimLeafIndex, -1) AS privateClaimLeafIndex,
+  coalesce(t.privateClaimRoot, "") AS privateClaimRoot,
+  coalesce(t.privateClaimNullifierHash, "") AS privateClaimNullifierHash,
+  coalesce(t.privateClaimId, "") AS privateClaimId,
   coalesce(t.settledAt, "") AS settledAt,
   t.createdAt AS createdAt
 ORDER BY t.createdAt DESC
@@ -983,6 +1108,11 @@ RETURN
   coalesce(t.payoutStatus, "") AS payoutStatus,
   coalesce(t.payoutError, "") AS payoutError,
   coalesce(t.payoutTransactionIds, []) AS payoutTransactionIds,
+  coalesce(t.privateClaimLeaf, "") AS privateClaimLeaf,
+  coalesce(t.privateClaimLeafIndex, -1) AS privateClaimLeafIndex,
+  coalesce(t.privateClaimRoot, "") AS privateClaimRoot,
+  coalesce(t.privateClaimNullifierHash, "") AS privateClaimNullifierHash,
+  coalesce(t.privateClaimId, "") AS privateClaimId,
   coalesce(t.settledAt, "") AS settledAt,
   t.createdAt AS createdAt
 ORDER BY t.createdAt DESC
@@ -1040,6 +1170,11 @@ RETURN
   coalesce(t.payoutStatus, "") AS payoutStatus,
   coalesce(t.payoutError, "") AS payoutError,
   coalesce(t.payoutTransactionIds, []) AS payoutTransactionIds,
+  coalesce(t.privateClaimLeaf, "") AS privateClaimLeaf,
+  coalesce(t.privateClaimLeafIndex, -1) AS privateClaimLeafIndex,
+  coalesce(t.privateClaimRoot, "") AS privateClaimRoot,
+  coalesce(t.privateClaimNullifierHash, "") AS privateClaimNullifierHash,
+  coalesce(t.privateClaimId, "") AS privateClaimId,
   coalesce(t.settledAt, "") AS settledAt,
   t.createdAt AS createdAt
 `, map[string]any{"id": id})
@@ -1802,34 +1937,39 @@ LIMIT 80
 
 func tradeFromRecord(record *neo4j.Record) Trade {
 	return Trade{
-		ID:                   stringValue(record, "id"),
-		UserID:               stringValue(record, "userId"),
-		UserWalletAddress:    stringValue(record, "userWalletAddress"),
-		PollID:               stringValue(record, "pollId"),
-		PollSlug:             stringValue(record, "pollSlug"),
-		PollTitle:            stringValue(record, "pollTitle"),
-		Side:                 stringValue(record, "side"),
-		OutcomeLabel:         stringValue(record, "outcomeLabel"),
-		PriceCents:           intValue(record, "priceCents"),
-		Amount:               roundMoney(floatValue(record, "amount")),
-		Shares:               roundMoney(floatValue(record, "shares")),
-		PotentialPayout:      roundMoney(floatValue(record, "potentialPayout")),
-		Status:               stringValue(record, "status"),
-		EscrowTxHash:         stringValue(record, "escrowTxHash"),
-		EscrowStatus:         stringValue(record, "escrowStatus"),
-		EscrowVerifiedAt:     stringValue(record, "escrowVerifiedAt"),
-		EscrowFrom:           stringValue(record, "escrowFrom"),
-		EscrowTo:             stringValue(record, "escrowTo"),
-		EscrowAmount:         roundMoney(floatValue(record, "escrowAmount")),
-		EscrowError:          stringValue(record, "escrowError"),
-		SettlementStatus:     stringValue(record, "settlementStatus"),
-		SettlementOutcome:    stringValue(record, "settlementOutcome"),
-		SettlementPayout:     roundMoney(floatValue(record, "settlementPayout")),
-		PayoutStatus:         stringValue(record, "payoutStatus"),
-		PayoutError:          stringValue(record, "payoutError"),
-		PayoutTransactionIDs: stringSliceValue(record, "payoutTransactionIds"),
-		SettledAt:            stringValue(record, "settledAt"),
-		CreatedAt:            stringValue(record, "createdAt"),
+		ID:                    stringValue(record, "id"),
+		UserID:                stringValue(record, "userId"),
+		UserWalletAddress:     stringValue(record, "userWalletAddress"),
+		PollID:                stringValue(record, "pollId"),
+		PollSlug:              stringValue(record, "pollSlug"),
+		PollTitle:             stringValue(record, "pollTitle"),
+		Side:                  stringValue(record, "side"),
+		OutcomeLabel:          stringValue(record, "outcomeLabel"),
+		PriceCents:            intValue(record, "priceCents"),
+		Amount:                roundMoney(floatValue(record, "amount")),
+		Shares:                roundMoney(floatValue(record, "shares")),
+		PotentialPayout:       roundMoney(floatValue(record, "potentialPayout")),
+		Status:                stringValue(record, "status"),
+		EscrowTxHash:          stringValue(record, "escrowTxHash"),
+		EscrowStatus:          stringValue(record, "escrowStatus"),
+		EscrowVerifiedAt:      stringValue(record, "escrowVerifiedAt"),
+		EscrowFrom:            stringValue(record, "escrowFrom"),
+		EscrowTo:              stringValue(record, "escrowTo"),
+		EscrowAmount:          roundMoney(floatValue(record, "escrowAmount")),
+		EscrowError:           stringValue(record, "escrowError"),
+		SettlementStatus:      stringValue(record, "settlementStatus"),
+		SettlementOutcome:     stringValue(record, "settlementOutcome"),
+		SettlementPayout:      roundMoney(floatValue(record, "settlementPayout")),
+		PayoutStatus:          stringValue(record, "payoutStatus"),
+		PayoutError:           stringValue(record, "payoutError"),
+		PayoutTransactionIDs:  stringSliceValue(record, "payoutTransactionIds"),
+		PrivateClaimLeaf:      stringValue(record, "privateClaimLeaf"),
+		PrivateClaimLeafIndex: intValue(record, "privateClaimLeafIndex"),
+		PrivateClaimRoot:      stringValue(record, "privateClaimRoot"),
+		PrivateClaimNullifier: stringValue(record, "privateClaimNullifierHash"),
+		PrivateClaimID:        stringValue(record, "privateClaimId"),
+		SettledAt:             stringValue(record, "settledAt"),
+		CreatedAt:             stringValue(record, "createdAt"),
 	}
 }
 

@@ -49,8 +49,18 @@ type ThirdwebIdentity struct {
 	RawJSON        string
 }
 
+type PrivyIdentity struct {
+	WalletAddress string
+	PrivyUserID   string
+	AuthProvider  string
+	Email         string
+	Phone         string
+	RawJSON       string
+}
+
 type UserStore interface {
 	UpsertFromThirdweb(ctx context.Context, identity ThirdwebIdentity) (User, error)
+	UpsertFromPrivy(ctx context.Context, identity PrivyIdentity) (User, error)
 	GetByID(ctx context.Context, id string) (User, bool, error)
 	CreateTokenGrantIfMissing(ctx context.Context, user User, input TokenGrantInput) (TokenGrant, bool, error)
 	UpdateTokenGrantStatus(ctx context.Context, id string, status string, transactionIDs []string, errorMessage string) (TokenGrant, error)
@@ -119,6 +129,73 @@ SET
   u.email = $email,
   u.phone = $phone,
   u.thirdwebProfile = $rawThirdweb,
+  u.role = coalesce(u.role, "user"),
+  u.status = coalesce(u.status, "active"),
+  u.notes = coalesce(u.notes, "")
+RETURN
+  u.id AS id,
+  u.walletAddress AS walletAddress,
+  coalesce(u.thirdwebUserId, "") AS thirdwebUserId,
+  coalesce(u.authProvider, "") AS authProvider,
+  coalesce(u.email, "") AS email,
+  coalesce(u.phone, "") AS phone,
+  coalesce(u.role, "user") AS role,
+  coalesce(u.status, "active") AS status,
+  coalesce(u.notes, "") AS notes,
+  u.createdAt AS createdAt,
+  u.lastLoginAt AS lastLoginAt,
+  u.loginCount AS loginCount,
+  (u.id = $newID) AS isNew
+`, params)
+		if err != nil {
+			return nil, err
+		}
+
+		if record.Next(ctx) {
+			return userFromRecord(record.Record()), nil
+		}
+		return nil, record.Err()
+	})
+	if err != nil {
+		return User{}, err
+	}
+
+	return result.(User), nil
+}
+
+func (s *MemgraphUserStore) UpsertFromPrivy(ctx context.Context, identity PrivyIdentity) (User, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	params := map[string]any{
+		"newID":         uuid.NewString(),
+		"walletAddress": identity.WalletAddress,
+		"privyUserId":   identity.PrivyUserID,
+		"authProvider":  identity.AuthProvider,
+		"email":         identity.Email,
+		"phone":         identity.Phone,
+		"rawPrivy":      identity.RawJSON,
+		"now":           now,
+	}
+
+	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		record, err := tx.Run(ctx, `
+MERGE (u:User {walletAddress: $walletAddress})
+ON CREATE SET
+  u.id = $newID,
+  u.createdAt = $now,
+  u.loginCount = 0
+SET
+  u.updatedAt = $now,
+  u.lastLoginAt = $now,
+  u.loginCount = coalesce(u.loginCount, 0) + 1,
+  u.privyUserId = $privyUserId,
+  u.thirdwebUserId = "",
+  u.authProvider = $authProvider,
+  u.email = $email,
+  u.phone = $phone,
+  u.privyProfile = $rawPrivy,
   u.role = coalesce(u.role, "user"),
   u.status = coalesce(u.status, "active"),
   u.notes = coalesce(u.notes, "")
