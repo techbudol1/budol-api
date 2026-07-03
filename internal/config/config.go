@@ -19,6 +19,8 @@ type Config struct {
 	AdminUsername                      string
 	AllowedOrigins                     []string
 	ArbitrumSepoliaRPCURL              string
+	CollateralBufferBps                int
+	CollateralGuaranteeEnabled         bool
 	PublicAppURL                       string
 	PublicAPIURL                       string
 	PrivyAPIBase                       string
@@ -28,12 +30,19 @@ type Config struct {
 	SessionCookieName                  string
 	SessionSecret                      string
 	SessionTTL                         time.Duration
+	SeedDemoPolls                      bool
 	ThirdwebAPIBase                    string
 	ThirdwebSecretKey                  string
 	ThirdwebMeURL                      string
 	ThirdwebSendURL                    string
 	GMREngineAPIBase                   string
 	GMREngineAPIKey                    string
+	FacebookOAuthClientID              string
+	FacebookOAuthClientSecret          string
+	FacebookOAuthRedirectURL           string
+	GoogleOAuthClientID                string
+	GoogleOAuthClientSecret            string
+	GoogleOAuthRedirectURL             string
 	ProjectWallet                      string
 	PrivateClaimRegistryAddress        string
 	PrivateClaimRegistryChainID        int
@@ -45,6 +54,7 @@ type Config struct {
 	ShieldedPayoutDenomination         string
 	ShieldedPayoutPools                []ShieldedPayoutPool
 	ShieldedPayoutRequired             bool
+	ShieldedPayoutDirectFallback       bool
 	ShieldedPayoutConfirmTimeout       time.Duration
 	ShieldedWithdrawalBatchLimit       int
 	ShieldedWithdrawalBaseBackoff      time.Duration
@@ -62,6 +72,17 @@ type Config struct {
 	MemgraphURI                        string
 	MemgraphUser                       string
 	MemgraphPassword                   string
+	NewsAgentEnabled                   bool
+	NewsAgentGDELTURL                  string
+	NewsAgentRSSURLs                   []string
+	NewsAgentInterval                  time.Duration
+	NewsAgentMaxArticles               int
+	NewsAgentMaxCandidates             int
+	NewsAgentPrimaryDomains            []string
+	NewsAgentQuery                     string
+	NewsAgentSourceDomains             []string
+	OpenAIAPIKey                       string
+	OpenAIModel                        string
 }
 
 type ShieldedPayoutPool struct {
@@ -70,7 +91,7 @@ type ShieldedPayoutPool struct {
 }
 
 func Load() (Config, error) {
-	loadDotEnv(".env", "../.env")
+	loadDotEnv(".env.server", "../.env.server")
 
 	cfg := Config{
 		Addr:                               env("SERVER_ADDR", ":8080"),
@@ -81,6 +102,8 @@ func Load() (Config, error) {
 		AdminUsername:                      env("ADMIN_USERNAME", "destrega"),
 		AllowedOrigins:                     splitCSV(env("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")),
 		ArbitrumSepoliaRPCURL:              env("ARBITRUM_SEPOLIA_RPC_URL", "https://sepolia-rollup.arbitrum.io/rpc"),
+		CollateralBufferBps:                envNonNegativeInt("COLLATERAL_BUFFER_BPS", 0),
+		CollateralGuaranteeEnabled:         envBool("COLLATERAL_GUARANTEE_ENABLED", true),
 		PrivyAPIBase:                       env("PRIVY_API_BASE", "https://api.privy.io"),
 		PrivyAppID:                         os.Getenv("PRIVY_APP_ID"),
 		PrivyAppSecret:                     os.Getenv("PRIVY_APP_SECRET"),
@@ -90,12 +113,19 @@ func Load() (Config, error) {
 		SessionCookieName:                  env("SESSION_COOKIE_NAME", "budol_session"),
 		SessionSecret:                      os.Getenv("SESSION_SECRET"),
 		SessionTTL:                         time.Duration(envInt("SESSION_TTL_HOURS", 24)) * time.Hour,
+		SeedDemoPolls:                      envBool("SEED_DEMO_POLLS", false),
 		ThirdwebAPIBase:                    env("THIRDWEB_API_BASE", "https://api.thirdweb.com"),
 		ThirdwebSecretKey:                  os.Getenv("THIRDWEB_SECRET_KEY"),
 		ThirdwebMeURL:                      env("THIRDWEB_ME_URL", "https://api.thirdweb.com/v1/wallets/me"),
 		ThirdwebSendURL:                    env("THIRDWEB_SEND_URL", "https://api.thirdweb.com/v1/wallets/send"),
 		GMREngineAPIBase:                   env("GMR_ENGINE_API_BASE", "http://localhost:8090"),
 		GMREngineAPIKey:                    os.Getenv("GMR_ENGINE_API_KEY"),
+		FacebookOAuthClientID:              os.Getenv("FACEBOOK_OAUTH_CLIENT_ID"),
+		FacebookOAuthClientSecret:          os.Getenv("FACEBOOK_OAUTH_CLIENT_SECRET"),
+		FacebookOAuthRedirectURL:           env("FACEBOOK_OAUTH_REDIRECT_URL", env("PUBLIC_API_URL", "http://localhost:8080")+"/api/auth/facebook/callback"),
+		GoogleOAuthClientID:                os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
+		GoogleOAuthClientSecret:            os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
+		GoogleOAuthRedirectURL:             env("GOOGLE_OAUTH_REDIRECT_URL", env("PUBLIC_API_URL", "http://localhost:8080")+"/api/auth/google/callback"),
 		ProjectWallet:                      firstEnv("BUDOL_PROJECT_WALLET_ADDRESS", "THIRDWEB_PROJECT_WALLET_ADDRESS", "SERVER_VAULT_WALLET_ADDRESS"),
 		PrivateClaimRegistryAddress:        os.Getenv("PRIVATE_CLAIM_REGISTRY_ADDRESS"),
 		PrivateClaimRegistryChainID:        envInt("PRIVATE_CLAIM_REGISTRY_CHAIN_ID", envInt("WELCOME_TOKEN_CHAIN_ID", 421614)),
@@ -106,6 +136,7 @@ func Load() (Config, error) {
 		ShieldedPayoutPoolChainID:          envInt("SHIELDED_PAYOUT_POOL_CHAIN_ID", envInt("WELCOME_TOKEN_CHAIN_ID", 421614)),
 		ShieldedPayoutDenomination:         os.Getenv("SHIELDED_PAYOUT_DENOMINATION"),
 		ShieldedPayoutRequired:             envBool("SHIELDED_PAYOUT_REQUIRED", false),
+		ShieldedPayoutDirectFallback:       envBool("SHIELDED_PAYOUT_DIRECT_FALLBACK", false),
 		ShieldedPayoutConfirmTimeout:       time.Duration(envInt("SHIELDED_PAYOUT_CONFIRM_TIMEOUT_SECONDS", 90)) * time.Second,
 		ShieldedWithdrawalBatchLimit:       envInt("SHIELDED_WITHDRAWAL_BATCH_LIMIT", 5),
 		ShieldedWithdrawalBaseBackoff:      time.Duration(envInt("SHIELDED_WITHDRAWAL_BASE_BACKOFF_SECONDS", 120)) * time.Second,
@@ -117,12 +148,23 @@ func Load() (Config, error) {
 		ShieldedWithdrawalStaleProcessing:  time.Duration(envInt("SHIELDED_WITHDRAWAL_STALE_PROCESSING_SECONDS", 600)) * time.Second,
 		ShieldedWithdrawalMode:             strings.ToLower(env("SHIELDED_WITHDRAWAL_MODE", "zkverify")),
 		WelcomeTokenChainID:                envInt("WELCOME_TOKEN_CHAIN_ID", 421614),
-		WelcomeTokenContract:               env("WELCOME_TOKEN_CONTRACT", "0x12fF5d28F93c1CABDA4Bd0ddf8906FF7E4Df1c4e"),
+		WelcomeTokenContract:               env("WELCOME_TOKEN_CONTRACT", "0x689513fb392e460c6d9225f911fce57fe50d6db4"),
 		WelcomeTokenAmount:                 env("WELCOME_TOKEN_AMOUNT", "100"),
 		WelcomeTokenDecimals:               envInt("WELCOME_TOKEN_DECIMALS", 18),
 		MemgraphURI:                        env("MEMGRAPH_URI", "bolt://localhost:7687"),
 		MemgraphUser:                       os.Getenv("MEMGRAPH_USER"),
 		MemgraphPassword:                   os.Getenv("MEMGRAPH_PASSWORD"),
+		NewsAgentEnabled:                   envBool("NEWS_AGENT_ENABLED", true),
+		NewsAgentGDELTURL:                  env("NEWS_AGENT_GDELT_URL", "https://api.gdeltproject.org/api/v2/doc/doc"),
+		NewsAgentRSSURLs:                   splitCSV(env("NEWS_AGENT_RSS_URLS", "https://newsinfo.inquirer.net/feed,https://www.philstar.com/rss/headlines,https://www.rappler.com/feed/")),
+		NewsAgentInterval:                  time.Duration(envInt("NEWS_AGENT_INTERVAL_MINUTES", 15)) * time.Minute,
+		NewsAgentMaxArticles:               envInt("NEWS_AGENT_MAX_ARTICLES", 40),
+		NewsAgentMaxCandidates:             envInt("NEWS_AGENT_MAX_CANDIDATES", 5),
+		NewsAgentPrimaryDomains:            splitCSV(env("NEWS_AGENT_PRIMARY_DOMAINS", "officialgazette.gov.ph,comelec.gov.ph,pagasa.dost.gov.ph,psa.gov.ph,bsp.gov.ph,pse.com.ph")),
+		NewsAgentQuery:                     env("NEWS_AGENT_QUERY", "Philippines OR Filipino OR Manila"),
+		NewsAgentSourceDomains:             splitCSV(env("NEWS_AGENT_SOURCE_DOMAINS", "gmanetwork.com,abs-cbn.com,inquirer.net,rappler.com,philstar.com,bworldonline.com,pna.gov.ph,officialgazette.gov.ph,comelec.gov.ph,pagasa.dost.gov.ph,psa.gov.ph,bsp.gov.ph,pse.com.ph")),
+		OpenAIAPIKey:                       strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
+		OpenAIModel:                        env("OPENAI_MODEL", "gpt-5.5"),
 	}
 	cfg.ShieldedPayoutPools = parseShieldedPayoutPools(os.Getenv("SHIELDED_PAYOUT_POOLS"), cfg.ShieldedPayoutDenomination, cfg.ShieldedPayoutPoolAddress)
 
@@ -134,6 +176,9 @@ func Load() (Config, error) {
 	}
 	if cfg.AdminUsername == "" || cfg.AdminPassword == "" {
 		return Config{}, errors.New("ADMIN_USERNAME and ADMIN_PASSWORD are required")
+	}
+	if cfg.CollateralBufferBps < 0 || cfg.CollateralBufferBps > 10000 {
+		return Config{}, errors.New("COLLATERAL_BUFFER_BPS must be between 0 and 10000")
 	}
 	if cfg.ShieldedPayoutRequired && !cfg.ShieldedPayoutEnabled {
 		return Config{}, errors.New("SHIELDED_PAYOUT_REQUIRED=true requires SHIELDED_PAYOUT_ENABLED=true")
@@ -152,6 +197,9 @@ func Load() (Config, error) {
 		}
 	}
 	if cfg.IsProduction() {
+		if !cfg.CollateralGuaranteeEnabled {
+			return Config{}, errors.New("COLLATERAL_GUARANTEE_ENABLED must be true in production")
+		}
 		if len(cfg.AllowedOrigins) == 0 {
 			return Config{}, errors.New("ALLOWED_ORIGINS is required in production")
 		}
@@ -324,6 +372,18 @@ func envInt(key string, fallback int) int {
 
 	parsed, err := strconv.Atoi(value)
 	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func envNonNegativeInt(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
 		return fallback
 	}
 	return parsed

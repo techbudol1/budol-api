@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -28,6 +29,28 @@ type WatchlistItem struct {
 	Region    string `json:"region"`
 	AddedAt   string `json:"addedAt"`
 	UpdatedAt string `json:"updatedAt"`
+}
+
+type MarketAlertInput struct {
+	PriceEnabled      bool
+	PriceDirection    string
+	PriceThreshold    int64
+	ClosingEnabled    bool
+	ResolutionEnabled bool
+}
+
+type MarketAlert struct {
+	PollID            string `json:"pollId"`
+	Slug              string `json:"slug"`
+	Title             string `json:"title"`
+	Enabled           bool   `json:"enabled"`
+	PriceEnabled      bool   `json:"priceEnabled"`
+	PriceDirection    string `json:"priceDirection"`
+	PriceThreshold    int64  `json:"priceThreshold"`
+	ClosingEnabled    bool   `json:"closingEnabled"`
+	ResolutionEnabled bool   `json:"resolutionEnabled"`
+	CreatedAt         string `json:"createdAt"`
+	UpdatedAt         string `json:"updatedAt"`
 }
 
 type AdminActivity struct {
@@ -103,7 +126,7 @@ func (s *MemgraphUserStore) CreateNotification(ctx context.Context, userID strin
 		"now":    now,
 	}
 	if params["title"] == "" {
-		params["title"] = "Budol update"
+		params["title"] = "BudolPH update"
 	}
 
 	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
@@ -308,6 +331,258 @@ DELETE w
 	return s.ListWatchlist(ctx, userID)
 }
 
+func (s *MemgraphUserStore) GetMarketAlert(ctx context.Context, userID string, slug string) (MarketAlert, bool, error) {
+	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rows, err := tx.Run(ctx, `
+MATCH (:User {id: $userID})-[a:HAS_MARKET_ALERT]->(p:Poll {slug: $slug})
+RETURN
+  p.id AS pollId,
+  p.slug AS slug,
+  p.title AS title,
+  true AS enabled,
+  coalesce(a.priceEnabled, false) AS priceEnabled,
+  coalesce(a.priceDirection, "above") AS priceDirection,
+  coalesce(a.priceThreshold, 50) AS priceThreshold,
+  coalesce(a.closingEnabled, false) AS closingEnabled,
+  coalesce(a.resolutionEnabled, false) AS resolutionEnabled,
+  a.createdAt AS createdAt,
+  coalesce(a.updatedAt, a.createdAt) AS updatedAt
+`, map[string]any{"userID": strings.TrimSpace(userID), "slug": slugify(slug)})
+		if err != nil {
+			return nil, err
+		}
+		if rows.Next(ctx) {
+			return marketAlertFromRecord(rows.Record()), nil
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return MarketAlert{}, false, err
+	}
+	if result == nil {
+		return MarketAlert{}, false, nil
+	}
+	return result.(MarketAlert), true, nil
+}
+
+func (s *MemgraphUserStore) UpsertMarketAlert(ctx context.Context, userID string, slug string, input MarketAlertInput) (MarketAlert, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rows, err := tx.Run(ctx, `
+MATCH (u:User {id: $userID})
+MATCH (p:Poll {slug: $slug})
+MERGE (u)-[a:HAS_MARKET_ALERT]->(p)
+ON CREATE SET a.createdAt = $now
+SET
+  a.priceEnabled = $priceEnabled,
+  a.priceDirection = $priceDirection,
+  a.priceThreshold = $priceThreshold,
+  a.closingEnabled = $closingEnabled,
+  a.resolutionEnabled = $resolutionEnabled,
+  a.closingAlertSentAt = CASE WHEN $closingEnabled THEN coalesce(a.closingAlertSentAt, "") ELSE "" END,
+  a.resolutionAlertStatus = CASE WHEN $resolutionEnabled THEN coalesce(a.resolutionAlertStatus, "") ELSE "" END,
+  a.updatedAt = $now
+RETURN
+  p.id AS pollId,
+  p.slug AS slug,
+  p.title AS title,
+  true AS enabled,
+  a.priceEnabled AS priceEnabled,
+  a.priceDirection AS priceDirection,
+  a.priceThreshold AS priceThreshold,
+  a.closingEnabled AS closingEnabled,
+  a.resolutionEnabled AS resolutionEnabled,
+  a.createdAt AS createdAt,
+  a.updatedAt AS updatedAt
+`, map[string]any{
+			"userID":            strings.TrimSpace(userID),
+			"slug":              slugify(slug),
+			"priceEnabled":      input.PriceEnabled,
+			"priceDirection":    input.PriceDirection,
+			"priceThreshold":    input.PriceThreshold,
+			"closingEnabled":    input.ClosingEnabled,
+			"resolutionEnabled": input.ResolutionEnabled,
+			"now":               now,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if rows.Next(ctx) {
+			return marketAlertFromRecord(rows.Record()), nil
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, errors.New("user or market not found")
+	})
+	if err != nil {
+		return MarketAlert{}, err
+	}
+	return result.(MarketAlert), nil
+}
+
+func (s *MemgraphUserStore) DeleteMarketAlert(ctx context.Context, userID string, slug string) error {
+	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+	_, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		_, err := tx.Run(ctx, `
+MATCH (:User {id: $userID})-[a:HAS_MARKET_ALERT]->(:Poll {slug: $slug})
+DELETE a
+`, map[string]any{"userID": strings.TrimSpace(userID), "slug": slugify(slug)})
+		return nil, err
+	})
+	return err
+}
+
+func (s *MemgraphUserStore) NotifyMarketPriceAlerts(ctx context.Context, pollID string, exceptUserID string, oldYesPercent int64, newYesPercent int64) (int64, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rows, err := tx.Run(ctx, `
+MATCH (u:User)-[a:HAS_MARKET_ALERT]->(p:Poll {id: $pollID})
+WHERE u.id <> $exceptUserID
+  AND coalesce(a.priceEnabled, false) = true
+  AND (
+    (a.priceDirection = "above" AND $oldYesPercent < a.priceThreshold AND $newYesPercent >= a.priceThreshold)
+    OR
+    (a.priceDirection = "below" AND $oldYesPercent > a.priceThreshold AND $newYesPercent <= a.priceThreshold)
+  )
+CREATE (n:Notification {
+  id: $idPrefix + u.id,
+  userId: u.id,
+  kind: "market_price_alert",
+  title: "Market price alert",
+  detail: p.title + ": Yes reached " + toString($newYesPercent) + "c.",
+  link: "/markets/" + p.slug,
+  readAt: "",
+  createdAt: $now,
+  updatedAt: $now
+})
+MERGE (u)-[:HAS_NOTIFICATION]->(n)
+SET a.lastPriceAlertAt = $now,
+    a.updatedAt = $now
+RETURN count(n) AS count
+`, map[string]any{
+			"pollID":        strings.TrimSpace(pollID),
+			"exceptUserID":  strings.TrimSpace(exceptUserID),
+			"oldYesPercent": oldYesPercent,
+			"newYesPercent": newYesPercent,
+			"idPrefix":      uuid.NewString() + "-",
+			"now":           now,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if rows.Next(ctx) {
+			return intValue(rows.Record(), "count"), nil
+		}
+		return int64(0), rows.Err()
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.(int64), nil
+}
+
+func (s *MemgraphUserStore) NotifyMarketResolutionAlerts(ctx context.Context, pollSlug string, status string) (int64, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rows, err := tx.Run(ctx, `
+MATCH (u:User)-[a:HAS_MARKET_ALERT]->(p:Poll {slug: $slug})
+WHERE coalesce(a.resolutionEnabled, false) = true
+  AND coalesce(a.resolutionAlertStatus, "") <> $status
+CREATE (n:Notification {
+  id: $idPrefix + u.id,
+  userId: u.id,
+  kind: "market_resolution_alert",
+  title: "Market " + $status,
+  detail: p.title + " has been " + $status + ".",
+  link: "/markets/" + p.slug,
+  readAt: "",
+  createdAt: $now,
+  updatedAt: $now
+})
+MERGE (u)-[:HAS_NOTIFICATION]->(n)
+SET a.resolutionAlertStatus = $status,
+    a.updatedAt = $now
+RETURN count(n) AS count
+`, map[string]any{
+			"slug":     slugify(pollSlug),
+			"status":   normalizeEventValue(status, "resolved"),
+			"idPrefix": uuid.NewString() + "-",
+			"now":      now,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if rows.Next(ctx) {
+			return intValue(rows.Record(), "count"), nil
+		}
+		return int64(0), rows.Err()
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.(int64), nil
+}
+
+func (s *MemgraphUserStore) ProcessDueMarketClosingAlerts(ctx context.Context, now time.Time) (int64, error) {
+	nowText := now.UTC().Format(time.RFC3339)
+	deadline := now.UTC().Add(24 * time.Hour).Format(time.RFC3339)
+	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rows, err := tx.Run(ctx, `
+MATCH (u:User)-[a:HAS_MARKET_ALERT]->(p:Poll)
+WHERE coalesce(a.closingEnabled, false) = true
+  AND coalesce(a.closingAlertSentAt, "") = ""
+  AND p.status = "published"
+  AND coalesce(p.endsAt, "") > $now
+  AND p.endsAt <= $deadline
+CREATE (n:Notification {
+  id: $idPrefix + u.id + "-" + p.id,
+  userId: u.id,
+  kind: "market_closing_alert",
+  title: "Market closing soon",
+  detail: p.title + " closes within 24 hours.",
+  link: "/markets/" + p.slug,
+  readAt: "",
+  createdAt: $now,
+  updatedAt: $now
+})
+MERGE (u)-[:HAS_NOTIFICATION]->(n)
+SET a.closingAlertSentAt = $now,
+    a.updatedAt = $now
+RETURN count(n) AS count
+`, map[string]any{
+			"now":      nowText,
+			"deadline": deadline,
+			"idPrefix": uuid.NewString() + "-",
+		})
+		if err != nil {
+			return nil, err
+		}
+		if rows.Next(ctx) {
+			return intValue(rows.Record(), "count"), nil
+		}
+		return int64(0), rows.Err()
+	})
+	if err != nil {
+		return 0, err
+	}
+	return result.(int64), nil
+}
+
 func (s *MemgraphUserStore) NotifyWatchers(ctx context.Context, pollSlug string, exceptUserID string, kind string, title string, detail string, link string) (int64, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
@@ -480,6 +755,22 @@ func watchlistItemFromRecord(record *neo4j.Record) WatchlistItem {
 		Region:    stringValue(record, "region"),
 		AddedAt:   stringValue(record, "addedAt"),
 		UpdatedAt: stringValue(record, "updatedAt"),
+	}
+}
+
+func marketAlertFromRecord(record *neo4j.Record) MarketAlert {
+	return MarketAlert{
+		PollID:            stringValue(record, "pollId"),
+		Slug:              stringValue(record, "slug"),
+		Title:             stringValue(record, "title"),
+		Enabled:           boolValue(record, "enabled"),
+		PriceEnabled:      boolValue(record, "priceEnabled"),
+		PriceDirection:    stringValue(record, "priceDirection"),
+		PriceThreshold:    intValue(record, "priceThreshold"),
+		ClosingEnabled:    boolValue(record, "closingEnabled"),
+		ResolutionEnabled: boolValue(record, "resolutionEnabled"),
+		CreatedAt:         stringValue(record, "createdAt"),
+		UpdatedAt:         stringValue(record, "updatedAt"),
 	}
 }
 

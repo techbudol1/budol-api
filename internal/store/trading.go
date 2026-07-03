@@ -30,18 +30,38 @@ type TradeInput struct {
 }
 
 type TradeQuote struct {
-	PollID            string  `json:"pollId"`
-	Side              string  `json:"side"`
-	OutcomeLabel      string  `json:"outcomeLabel"`
-	Amount            float64 `json:"amount"`
-	SpotPriceCents    int64   `json:"spotPriceCents"`
-	AveragePriceCents int64   `json:"averagePriceCents"`
-	Shares            float64 `json:"shares"`
-	PotentialPayout   float64 `json:"potentialPayout"`
-	NewYesPercent     int64   `json:"newYesPercent"`
-	NewNoPercent      int64   `json:"newNoPercent"`
-	PriceImpactCents  int64   `json:"priceImpactCents"`
-	Liquidity         float64 `json:"liquidity"`
+	PollID              string  `json:"pollId"`
+	Side                string  `json:"side"`
+	OutcomeLabel        string  `json:"outcomeLabel"`
+	Amount              float64 `json:"amount"`
+	SpotPriceCents      int64   `json:"spotPriceCents"`
+	AveragePriceCents   int64   `json:"averagePriceCents"`
+	Shares              float64 `json:"shares"`
+	PotentialPayout     float64 `json:"potentialPayout"`
+	NewYesPercent       int64   `json:"newYesPercent"`
+	NewNoPercent        int64   `json:"newNoPercent"`
+	PriceImpactCents    int64   `json:"priceImpactCents"`
+	Liquidity           float64 `json:"liquidity"`
+	Collateralized      bool    `json:"collateralized"`
+	CollateralRequired  float64 `json:"collateralRequired"`
+	CollateralAvailable float64 `json:"collateralAvailable"`
+	CollateralCoverage  float64 `json:"collateralCoverage"`
+}
+
+type MarketCollateralRequirement struct {
+	PollID             string  `json:"pollId"`
+	PollSlug           string  `json:"pollSlug"`
+	PollTitle          string  `json:"pollTitle"`
+	YesLiability       float64 `json:"yesLiability"`
+	NoLiability        float64 `json:"noLiability"`
+	RefundLiability    float64 `json:"refundLiability"`
+	FixedPayouts       float64 `json:"fixedPayouts"`
+	RequiredCollateral float64 `json:"requiredCollateral"`
+}
+
+type CollateralRequirement struct {
+	Markets       []MarketCollateralRequirement `json:"markets"`
+	TotalRequired float64                       `json:"totalRequired"`
 }
 
 type CashoutQuote struct {
@@ -112,8 +132,11 @@ type Position struct {
 	PollID          string  `json:"pollId"`
 	PollSlug        string  `json:"pollSlug"`
 	PollTitle       string  `json:"pollTitle"`
+	PollStatus      string  `json:"pollStatus"`
 	Category        string  `json:"category"`
 	Region          string  `json:"region"`
+	EndsAt          string  `json:"endsAt"`
+	TradingFrozen   bool    `json:"tradingFrozen"`
 	Side            string  `json:"side"`
 	OutcomeLabel    string  `json:"outcomeLabel"`
 	Amount          float64 `json:"amount"`
@@ -422,6 +445,8 @@ RETURN count(t) AS used
 MATCH (u:User {id: $userID})
 MATCH (p:Poll {id: $pollID})-[:CLASSIFIED_AS]->(c:PollClassification)
 WHERE p.status = "published" AND p.visibility = "public" AND coalesce(p.tradingFrozen, false) = false
+  AND (coalesce(p.startsAt, "") = "" OR p.startsAt <= $now)
+  AND (coalesce(p.endsAt, "") = "" OR p.endsAt > $now)
 SET
   p.yesShares = $newYesShares,
   p.noShares = $newNoShares,
@@ -526,7 +551,10 @@ func (s *MemgraphUserStore) QuoteTrade(ctx context.Context, input TradeInput) (T
 	defer session.Close(ctx)
 
 	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
-		rows, err := tx.Run(ctx, tradeablePollStateCypher(), map[string]any{"pollID": input.PollID})
+		rows, err := tx.Run(ctx, tradeablePollStateCypher(), map[string]any{
+			"pollID": input.PollID,
+			"now":    time.Now().UTC().Format(time.RFC3339),
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -550,6 +578,148 @@ func (s *MemgraphUserStore) QuoteTrade(ctx context.Context, input TradeInput) (T
 		return TradeQuote{}, err
 	}
 	return result.(TradeQuote), nil
+}
+
+func (s *MemgraphUserStore) CollateralRequirement(ctx context.Context) (CollateralRequirement, error) {
+	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rows, err := tx.Run(ctx, `
+MATCH (p:Poll)
+OPTIONAL MATCH (t:Trade)-[:ON_POLL]->(p)
+WITH p,
+  sum(CASE WHEN coalesce(t.status, "") = "open" AND coalesce(t.side, "") = "yes" THEN coalesce(t.potentialPayout, 0.0) ELSE 0.0 END) AS yesLiability,
+  sum(CASE WHEN coalesce(t.status, "") = "open" AND coalesce(t.side, "") = "no" THEN coalesce(t.potentialPayout, 0.0) ELSE 0.0 END) AS noLiability,
+  sum(CASE WHEN coalesce(t.status, "") = "open" THEN coalesce(t.amount, 0.0) ELSE 0.0 END) AS refundLiability,
+  sum(CASE
+    WHEN coalesce(t.status, "") IN ["won", "cancelled", "cashed_out"]
+      AND coalesce(t.settlementPayout, 0.0) > 0.0
+      AND NOT (coalesce(t.payoutStatus, "") IN ["sent", "confirmed", "success", "paid"])
+    THEN coalesce(t.settlementPayout, 0.0)
+    ELSE 0.0
+  END) AS fixedPayouts
+RETURN
+  p.id AS pollId,
+  p.slug AS pollSlug,
+  p.title AS pollTitle,
+  yesLiability,
+  noLiability,
+  refundLiability,
+  fixedPayouts
+ORDER BY p.updatedAt DESC
+`, nil)
+		if err != nil {
+			return nil, err
+		}
+
+		requirement := CollateralRequirement{Markets: []MarketCollateralRequirement{}}
+		for rows.Next(ctx) {
+			record := rows.Record()
+			market := MarketCollateralRequirement{
+				PollID:          stringValue(record, "pollId"),
+				PollSlug:        stringValue(record, "pollSlug"),
+				PollTitle:       stringValue(record, "pollTitle"),
+				YesLiability:    roundMoney(floatValue(record, "yesLiability")),
+				NoLiability:     roundMoney(floatValue(record, "noLiability")),
+				RefundLiability: roundMoney(floatValue(record, "refundLiability")),
+				FixedPayouts:    roundMoney(floatValue(record, "fixedPayouts")),
+			}
+			market.RequiredCollateral = collateralRequired(
+				market.YesLiability,
+				market.NoLiability,
+				market.RefundLiability,
+				market.FixedPayouts,
+			)
+			if market.RequiredCollateral <= 0 {
+				continue
+			}
+			requirement.Markets = append(requirement.Markets, market)
+			requirement.TotalRequired += market.RequiredCollateral
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		requirement.TotalRequired = roundMoney(requirement.TotalRequired)
+		return requirement, nil
+	})
+	if err != nil {
+		return CollateralRequirement{}, err
+	}
+	return result.(CollateralRequirement), nil
+}
+
+func ProjectedCollateralRequirement(requirement CollateralRequirement, quote TradeQuote) CollateralRequirement {
+	projected := requirement
+	projected.Markets = append([]MarketCollateralRequirement(nil), requirement.Markets...)
+
+	index := -1
+	for i := range projected.Markets {
+		if projected.Markets[i].PollID == quote.PollID {
+			index = i
+			break
+		}
+	}
+	if index < 0 {
+		projected.Markets = append(projected.Markets, MarketCollateralRequirement{PollID: quote.PollID})
+		index = len(projected.Markets) - 1
+	}
+
+	market := projected.Markets[index]
+	projected.TotalRequired -= market.RequiredCollateral
+	if quote.Side == "yes" {
+		market.YesLiability = roundMoney(market.YesLiability + quote.PotentialPayout)
+	} else {
+		market.NoLiability = roundMoney(market.NoLiability + quote.PotentialPayout)
+	}
+	market.RefundLiability = roundMoney(market.RefundLiability + quote.Amount)
+	market.RequiredCollateral = collateralRequired(
+		market.YesLiability,
+		market.NoLiability,
+		market.RefundLiability,
+		market.FixedPayouts,
+	)
+	projected.Markets[index] = market
+	projected.TotalRequired = roundMoney(projected.TotalRequired + market.RequiredCollateral)
+	return projected
+}
+
+func ProjectedCollateralAfterCashout(requirement CollateralRequirement, quote CashoutQuote) CollateralRequirement {
+	projected := requirement
+	projected.Markets = append([]MarketCollateralRequirement(nil), requirement.Markets...)
+
+	for index := range projected.Markets {
+		if projected.Markets[index].PollID != quote.PollID {
+			continue
+		}
+		market := projected.Markets[index]
+		projected.TotalRequired -= market.RequiredCollateral
+		if quote.Side == "yes" {
+			market.YesLiability = roundMoney(math.Max(0, market.YesLiability-quote.Shares))
+		} else {
+			market.NoLiability = roundMoney(math.Max(0, market.NoLiability-quote.Shares))
+		}
+		market.RefundLiability = roundMoney(math.Max(0, market.RefundLiability-quote.Amount))
+		market.RequiredCollateral = collateralRequired(
+			market.YesLiability,
+			market.NoLiability,
+			market.RefundLiability,
+			market.FixedPayouts,
+		)
+		projected.Markets[index] = market
+		projected.TotalRequired = roundMoney(projected.TotalRequired + market.RequiredCollateral)
+		return projected
+	}
+	return projected
+}
+
+func CollateralRelease(before CollateralRequirement, after CollateralRequirement) float64 {
+	return roundMoney(math.Max(0, before.TotalRequired-after.TotalRequired))
+}
+
+func collateralRequired(yesLiability float64, noLiability float64, refundLiability float64, fixedPayouts float64) float64 {
+	openRequirement := math.Max(math.Max(yesLiability, noLiability), refundLiability)
+	return roundMoney(math.Max(0, fixedPayouts) + math.Max(0, openRequirement))
 }
 
 func (s *MemgraphUserStore) QuoteCashout(ctx context.Context, userID string, input CashoutInput) (CashoutQuote, error) {
@@ -709,6 +879,8 @@ func tradeablePollStateCypher() string {
 	return `
 MATCH (p:Poll {id: $pollID})-[:CLASSIFIED_AS]->(c:PollClassification)
 WHERE p.status = "published" AND p.visibility = "public"
+  AND (coalesce(p.startsAt, "") = "" OR p.startsAt <= $now)
+  AND (coalesce(p.endsAt, "") = "" OR p.endsAt > $now)
 RETURN
   p.id AS pollId,
   p.slug AS pollSlug,
@@ -794,6 +966,8 @@ func cashoutState(ctx context.Context, tx neo4j.ManagedTransaction, userID strin
 MATCH (u:User {id: $userID})
 MATCH (p:Poll {id: $pollID})-[:CLASSIFIED_AS]->(:PollClassification)
 WHERE p.status = "published" AND p.visibility = "public" AND coalesce(p.tradingFrozen, false) = false
+  AND (coalesce(p.startsAt, "") = "" OR p.startsAt <= $now)
+  AND (coalesce(p.endsAt, "") = "" OR p.endsAt > $now)
 OPTIONAL MATCH (u)-[:PLACED_TRADE]->(t:Trade {status: "open", side: $side})-[:ON_POLL]->(p)
 RETURN
   p.id AS pollId,
@@ -808,7 +982,12 @@ RETURN
   p.yesShares IS NOT NULL AS marketStateExists,
   sum(coalesce(t.shares, 0.0)) AS positionShares,
   sum(coalesce(t.amount, 0.0)) AS positionAmount
-`, map[string]any{"userID": userID, "pollID": pollID, "side": side})
+`, map[string]any{
+		"userID": userID,
+		"pollID": pollID,
+		"side":   side,
+		"now":    time.Now().UTC().Format(time.RFC3339),
+	})
 	if err != nil {
 		return marketMakerState{}, 0, 0, 0, err
 	}
@@ -954,8 +1133,11 @@ RETURN
   p.id AS pollId,
   p.slug AS pollSlug,
   p.title AS pollTitle,
+  coalesce(p.status, "") AS pollStatus,
   c.displayName AS category,
   coalesce(p.region, "") AS region,
+  coalesce(p.endsAt, "") AS endsAt,
+  coalesce(p.tradingFrozen, false) AS tradingFrozen,
   side AS side,
   outcomeLabel AS outcomeLabel,
   amount AS amount,
@@ -1288,7 +1470,7 @@ RETURN
     ELSE "buy"
   END AS kind,
   coalesce(t.status, "open") AS status,
-  coalesce(u.walletAddress, "") AS actor,
+  CASE WHEN trim(coalesce(u.publicAlias, "")) = "" THEN "Anonymous Trader" ELSE u.publicAlias END AS actor,
   coalesce(t.side, "") AS side,
   coalesce(t.outcomeLabel, "") AS outcomeLabel,
   coalesce(t.amount, 0.0) AS amount,
@@ -1368,14 +1550,14 @@ func (s *MemgraphUserStore) ListMarketComments(ctx context.Context, slug string)
 	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		rows, err := tx.Run(ctx, `
 MATCH (u:User)-[:POSTED_COMMENT]->(m:MarketComment)-[:ON_POLL]->(p:Poll {slug: $slug})
-WHERE p.status = "published" AND p.visibility = "public"
+WHERE p.status IN ["published", "paused", "resolved", "cancelled"] AND p.visibility = "public"
   AND coalesce(m.status, "visible") = "visible"
 RETURN
   m.id AS id,
   u.id AS userId,
   p.id AS pollId,
   p.slug AS pollSlug,
-  coalesce(u.walletAddress, "") AS actor,
+  CASE WHEN trim(coalesce(u.publicAlias, "")) = "" THEN "Anonymous Trader" ELSE u.publicAlias END AS actor,
   coalesce(m.body, "") AS body,
   coalesce(m.status, "visible") AS status,
   coalesce(m.reportCount, 0) AS reportCount,
@@ -1446,7 +1628,7 @@ RETURN
   u.id AS userId,
   p.id AS pollId,
   p.slug AS pollSlug,
-  coalesce(u.walletAddress, "") AS actor,
+  CASE WHEN trim(coalesce(u.publicAlias, "")) = "" THEN "Anonymous Trader" ELSE u.publicAlias END AS actor,
   m.body AS body,
   coalesce(m.status, "visible") AS status,
   coalesce(m.reportCount, 0) AS reportCount,
@@ -1483,7 +1665,7 @@ RETURN
   u.id AS userId,
   p.id AS pollId,
   p.slug AS pollSlug,
-  coalesce(u.walletAddress, "") AS actor,
+  CASE WHEN trim(coalesce(u.publicAlias, "")) = "" THEN "Anonymous Trader" ELSE u.publicAlias END AS actor,
   coalesce(m.body, "") AS body,
   coalesce(m.status, "visible") AS status,
   coalesce(m.reportCount, 0) AS reportCount,
@@ -1530,7 +1712,7 @@ RETURN
   u.id AS userId,
   p.id AS pollId,
   p.slug AS pollSlug,
-  coalesce(u.walletAddress, "") AS actor,
+  CASE WHEN trim(coalesce(u.publicAlias, "")) = "" THEN "Anonymous Trader" ELSE u.publicAlias END AS actor,
   coalesce(m.body, "") AS body,
   coalesce(m.status, "visible") AS status,
   coalesce(m.reportCount, 0) AS reportCount,
@@ -1598,7 +1780,7 @@ RETURN
   u.id AS userId,
   p.id AS pollId,
   p.slug AS pollSlug,
-  coalesce(u.walletAddress, "") AS actor,
+  CASE WHEN trim(coalesce(u.publicAlias, "")) = "" THEN "Anonymous Trader" ELSE u.publicAlias END AS actor,
   coalesce(m.body, "") AS body,
   coalesce(m.status, "visible") AS status,
   coalesce(m.reportCount, 0) AS reportCount,
@@ -1978,8 +2160,11 @@ func positionFromRecord(record *neo4j.Record) Position {
 		PollID:          stringValue(record, "pollId"),
 		PollSlug:        stringValue(record, "pollSlug"),
 		PollTitle:       stringValue(record, "pollTitle"),
+		PollStatus:      stringValue(record, "pollStatus"),
 		Category:        stringValue(record, "category"),
 		Region:          stringValue(record, "region"),
+		EndsAt:          stringValue(record, "endsAt"),
+		TradingFrozen:   boolValue(record, "tradingFrozen"),
 		Side:            stringValue(record, "side"),
 		OutcomeLabel:    stringValue(record, "outcomeLabel"),
 		Amount:          roundMoney(floatValue(record, "amount")),
@@ -2000,7 +2185,7 @@ func marketActivityFromRecord(record *neo4j.Record) MarketActivity {
 		ID:               stringValue(record, "id"),
 		Kind:             stringValue(record, "kind"),
 		Status:           stringValue(record, "status"),
-		Actor:            shortWalletLabel(stringValue(record, "actor")),
+		Actor:            defaultString(strings.TrimSpace(stringValue(record, "actor")), "Anonymous Trader"),
 		Side:             stringValue(record, "side"),
 		OutcomeLabel:     stringValue(record, "outcomeLabel"),
 		Amount:           roundMoney(floatValue(record, "amount")),
@@ -2033,7 +2218,7 @@ func marketCommentFromRecord(record *neo4j.Record) MarketComment {
 		UserID:             stringValue(record, "userId"),
 		PollID:             stringValue(record, "pollId"),
 		PollSlug:           stringValue(record, "pollSlug"),
-		Actor:              shortWalletLabel(stringValue(record, "actor")),
+		Actor:              defaultString(strings.TrimSpace(stringValue(record, "actor")), "Anonymous Trader"),
 		Body:               stringValue(record, "body"),
 		Status:             stringValue(record, "status"),
 		ReportCount:        intValue(record, "reportCount"),
@@ -2056,14 +2241,6 @@ func settlementPayoutAttemptFromRecord(record *neo4j.Record) SettlementPayoutAtt
 		Actor:          stringValue(record, "actor"),
 		CreatedAt:      stringValue(record, "createdAt"),
 	}
-}
-
-func shortWalletLabel(address string) string {
-	address = strings.TrimSpace(address)
-	if len(address) <= 12 {
-		return "Trader"
-	}
-	return address[:6] + "..." + address[len(address)-4:]
 }
 
 func normalizeSettlementInput(status string, outcome string) (string, string, string, error) {

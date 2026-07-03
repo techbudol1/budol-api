@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -53,23 +54,23 @@ func TestValidatePrivateClaimProofContextMatchesClaim(t *testing.T) {
 		PollID:   "poll-1",
 		PollSlug: "poll-slug",
 	}
-	context, err := server.privateClaimProofContext(trade, "123", "456")
+	proofContext, err := server.privateClaimProofContext(context.Background(), trade, "123", "456")
 	if err != nil {
 		t.Fatalf("expected context: %v", err)
 	}
-	submission := gmrengine.ZKProofSubmission{Context: string(context)}
-	if err := server.validatePrivateClaimProofContext(submission, trade, "123", "456"); err != nil {
+	submission := gmrengine.ZKProofSubmission{Context: string(proofContext)}
+	if err := server.validatePrivateClaimProofContext(context.Background(), submission, trade, "123", "456"); err != nil {
 		t.Fatalf("expected context to validate: %v", err)
 	}
 
 	var tampered map[string]any
-	if err := json.Unmarshal(context, &tampered); err != nil {
+	if err := json.Unmarshal(proofContext, &tampered); err != nil {
 		t.Fatal(err)
 	}
 	tampered["tradeId"] = "other-trade"
 	tamperedBytes, _ := json.Marshal(tampered)
 	submission.Context = string(tamperedBytes)
-	if err := server.validatePrivateClaimProofContext(submission, trade, "123", "456"); err == nil {
+	if err := server.validatePrivateClaimProofContext(context.Background(), submission, trade, "123", "456"); err == nil {
 		t.Fatal("expected tampered context to be rejected")
 	}
 }

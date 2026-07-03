@@ -197,6 +197,51 @@ func TestERC20TransferInTransaction(t *testing.T) {
 	}
 }
 
+func TestTransactionReceiptStatusConfirmed(t *testing.T) {
+	client := receiptStatusTestClient(t, `{"jsonrpc":"2.0","id":1,"result":{"status":"0x1"}}`)
+	status, err := client.TransactionReceiptStatus(context.Background(), "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Confirmed || status.Pending || status.Failed {
+		t.Fatalf("unexpected receipt status: %#v", status)
+	}
+}
+
+func TestTransactionReceiptStatusPending(t *testing.T) {
+	client := receiptStatusTestClient(t, `{"jsonrpc":"2.0","id":1,"result":null}`)
+	status, err := client.TransactionReceiptStatus(context.Background(), "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Pending || status.Confirmed || status.Failed {
+		t.Fatalf("unexpected receipt status: %#v", status)
+	}
+}
+
+func receiptStatusTestClient(t *testing.T, response string) *Client {
+	t.Helper()
+	return &Client{
+		rpcURL: "http://rpc.test",
+		httpClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			var payload struct {
+				Method string `json:"method"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.Method != "eth_getTransactionReceipt" {
+				t.Fatalf("unexpected method: %s", payload.Method)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(bytes.NewBufferString(response)),
+			}, nil
+		})},
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {

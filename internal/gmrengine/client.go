@@ -27,9 +27,44 @@ type TransferRequest struct {
 	Recipient       string
 }
 
+type TransferWithPermitRequest struct {
+	Amount          string
+	ChainID         int
+	ContractAddress string
+	Deadline        string
+	Decimals        int
+	Owner           string
+	Recipient       string
+	R               string
+	S               string
+	V               int
+}
+
 type TransferResult struct {
 	TransactionIDs []string `json:"transactionIds"`
 	RawJSON        string   `json:"-"`
+}
+
+type TransferWithPermitResult struct {
+	PermitTransactionHash   string   `json:"permitTransactionHash"`
+	TransactionIDs          []string `json:"transactionIds"`
+	TransferTransactionHash string   `json:"transferTransactionHash"`
+	RawJSON                 string   `json:"-"`
+}
+
+type AuthMeResult struct {
+	App struct {
+		GasFreeEnabled bool   `json:"gasFreeEnabled"`
+		ID             string `json:"id"`
+		Name           string `json:"name"`
+	} `json:"app"`
+}
+
+type ProjectWallet struct {
+	Address        string `json:"address"`
+	IsDefaultAdmin bool   `json:"isDefaultAdmin"`
+	Status         string `json:"status"`
+	WalletType     string `json:"walletType"`
 }
 
 type BalanceResult struct {
@@ -91,11 +126,29 @@ type ZKProofSubmitRequest struct {
 }
 
 type UserWalletRequest struct {
-	Address      string
-	AuthProvider string
-	Email        string
-	Metadata     string
-	UserID       string
+	Address       string
+	AuthProvider  string
+	Email         string
+	Metadata      string
+	UserID        string
+	WalletCustody string
+	WalletType    string
+}
+
+type UserWallet struct {
+	ID            string `json:"id"`
+	AppID         string `json:"appId"`
+	UserID        string `json:"userId"`
+	Address       string `json:"address"`
+	AuthProvider  string `json:"authProvider"`
+	Email         string `json:"email"`
+	Status        string `json:"status"`
+	Metadata      string `json:"metadata"`
+	WalletCustody string `json:"walletCustody"`
+	WalletType    string `json:"walletType"`
+	CreatedAt     string `json:"createdAt"`
+	UpdatedAt     string `json:"updatedAt"`
+	LastSeenAt    string `json:"lastSeenAt"`
 }
 
 func NewClient(baseURL string, apiKey string) *Client {
@@ -108,6 +161,69 @@ func NewClient(baseURL string, apiKey string) *Client {
 
 func (c *Client) Configured() bool {
 	return c != nil && c.baseURL != "" && c.apiKey != ""
+}
+
+func (c *Client) AuthMe(ctx context.Context) (AuthMeResult, error) {
+	if !c.Configured() {
+		return AuthMeResult{}, errors.New("GMR Engine is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/auth/me", nil)
+	if err != nil {
+		return AuthMeResult{}, err
+	}
+	c.setHeaders(req)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return AuthMeResult{}, err
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return AuthMeResult{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return AuthMeResult{}, fmt.Errorf("GMR Engine auth lookup failed: status %d: %s", resp.StatusCode, string(responseBody))
+	}
+	var result AuthMeResult
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return AuthMeResult{}, fmt.Errorf("invalid GMR Engine auth response: %w", err)
+	}
+	return result, nil
+}
+
+func (c *Client) DefaultAdminWallet(ctx context.Context) (ProjectWallet, bool, error) {
+	if !c.Configured() {
+		return ProjectWallet{}, false, errors.New("GMR Engine is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/v1/wallets?limit=100", nil)
+	if err != nil {
+		return ProjectWallet{}, false, err
+	}
+	c.setHeaders(req)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return ProjectWallet{}, false, err
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return ProjectWallet{}, false, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ProjectWallet{}, false, fmt.Errorf("GMR Engine wallet lookup failed: status %d: %s", resp.StatusCode, string(responseBody))
+	}
+	var payload struct {
+		Wallets []ProjectWallet `json:"wallets"`
+	}
+	if err := json.Unmarshal(responseBody, &payload); err != nil {
+		return ProjectWallet{}, false, fmt.Errorf("invalid GMR Engine wallet response: %w", err)
+	}
+	for _, wallet := range payload.Wallets {
+		if wallet.IsDefaultAdmin && strings.EqualFold(wallet.Status, "active") {
+			return wallet, true, nil
+		}
+	}
+	return ProjectWallet{}, false, nil
 }
 
 func (c *Client) Transaction(ctx context.Context, id string) (Transaction, error) {
@@ -223,6 +339,95 @@ func (c *Client) TransferERC20(ctx context.Context, request TransferRequest) (Tr
 	return result, nil
 }
 
+func (c *Client) TransferERC20WithPermit(ctx context.Context, request TransferWithPermitRequest) (TransferWithPermitResult, error) {
+	if !c.Configured() {
+		return TransferWithPermitResult{}, errors.New("GMR Engine is not configured")
+	}
+	payload := map[string]any{
+		"amount":          strings.TrimSpace(request.Amount),
+		"chainId":         request.ChainID,
+		"contractAddress": strings.TrimSpace(request.ContractAddress),
+		"deadline":        strings.TrimSpace(request.Deadline),
+		"decimals":        request.Decimals,
+		"owner":           strings.TrimSpace(request.Owner),
+		"recipient":       strings.TrimSpace(request.Recipient),
+		"r":               strings.TrimSpace(request.R),
+		"s":               strings.TrimSpace(request.S),
+		"v":               request.V,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return TransferWithPermitResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/erc20/transfer-with-permit", bytes.NewReader(body))
+	if err != nil {
+		return TransferWithPermitResult{}, err
+	}
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return TransferWithPermitResult{}, err
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return TransferWithPermitResult{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return TransferWithPermitResult{}, fmt.Errorf("GMR Engine gas-free transfer failed: status %d: %s", resp.StatusCode, string(responseBody))
+	}
+	var result TransferWithPermitResult
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return TransferWithPermitResult{}, fmt.Errorf("invalid GMR Engine gas-free transfer response: %w", err)
+	}
+	result.RawJSON = string(responseBody)
+	return result, nil
+}
+
+func (c *Client) TransferManagedERC20WithPermit(ctx context.Context, request TransferWithPermitRequest) (TransferWithPermitResult, error) {
+	if !c.Configured() {
+		return TransferWithPermitResult{}, errors.New("GMR Engine is not configured")
+	}
+	payload := map[string]any{
+		"amount":          strings.TrimSpace(request.Amount),
+		"chainId":         request.ChainID,
+		"contractAddress": strings.TrimSpace(request.ContractAddress),
+		"deadline":        strings.TrimSpace(request.Deadline),
+		"decimals":        request.Decimals,
+		"owner":           strings.TrimSpace(request.Owner),
+		"recipient":       strings.TrimSpace(request.Recipient),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return TransferWithPermitResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/erc20/managed-transfer-with-permit", bytes.NewReader(body))
+	if err != nil {
+		return TransferWithPermitResult{}, err
+	}
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return TransferWithPermitResult{}, err
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return TransferWithPermitResult{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return TransferWithPermitResult{}, fmt.Errorf("GMR Engine managed transfer failed: status %d: %s", resp.StatusCode, string(responseBody))
+	}
+	var result TransferWithPermitResult
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return TransferWithPermitResult{}, fmt.Errorf("invalid GMR Engine managed transfer response: %w", err)
+	}
+	result.RawJSON = string(responseBody)
+	return result, nil
+}
+
 func (c *Client) ERC20Balance(ctx context.Context, chainID int, contractAddress string, walletAddress string) (BalanceResult, error) {
 	if !c.Configured() {
 		return BalanceResult{}, errors.New("GMR Engine is not configured")
@@ -263,11 +468,13 @@ func (c *Client) UpsertUserWallet(ctx context.Context, request UserWalletRequest
 		return errors.New("GMR Engine is not configured")
 	}
 	payload := map[string]any{
-		"address":      strings.TrimSpace(request.Address),
-		"authProvider": strings.TrimSpace(request.AuthProvider),
-		"email":        strings.TrimSpace(request.Email),
-		"metadata":     strings.TrimSpace(request.Metadata),
-		"userID":       strings.TrimSpace(request.UserID),
+		"address":       strings.TrimSpace(request.Address),
+		"authProvider":  strings.TrimSpace(request.AuthProvider),
+		"email":         strings.TrimSpace(request.Email),
+		"metadata":      strings.TrimSpace(request.Metadata),
+		"userID":        strings.TrimSpace(request.UserID),
+		"walletCustody": strings.TrimSpace(request.WalletCustody),
+		"walletType":    strings.TrimSpace(request.WalletType),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -291,6 +498,49 @@ func (c *Client) UpsertUserWallet(ctx context.Context, request UserWalletRequest
 		return fmt.Errorf("GMR Engine user wallet upsert failed: status %d: %s", resp.StatusCode, string(responseBody))
 	}
 	return nil
+}
+
+func (c *Client) CreateManagedUserWallet(ctx context.Context, request UserWalletRequest) (UserWallet, error) {
+	if !c.Configured() {
+		return UserWallet{}, errors.New("GMR Engine is not configured")
+	}
+	payload := map[string]any{
+		"authProvider": strings.TrimSpace(request.AuthProvider),
+		"email":        strings.TrimSpace(request.Email),
+		"metadata":     strings.TrimSpace(request.Metadata),
+		"userID":       strings.TrimSpace(request.UserID),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return UserWallet{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/user-wallets/managed", bytes.NewReader(body))
+	if err != nil {
+		return UserWallet{}, err
+	}
+	c.setHeaders(req)
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return UserWallet{}, err
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return UserWallet{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return UserWallet{}, fmt.Errorf("GMR Engine managed user wallet failed: status %d: %s", resp.StatusCode, string(responseBody))
+	}
+	var result struct {
+		Wallet UserWallet `json:"wallet"`
+	}
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return UserWallet{}, fmt.Errorf("invalid GMR Engine managed wallet response: %w", err)
+	}
+	if strings.TrimSpace(result.Wallet.Address) == "" {
+		return UserWallet{}, errors.New("GMR Engine did not return a managed wallet address")
+	}
+	return result.Wallet, nil
 }
 
 func (c *Client) ZKProofSubmission(ctx context.Context, id string) (ZKProofSubmission, error) {

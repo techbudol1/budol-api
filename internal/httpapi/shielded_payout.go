@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -140,7 +141,7 @@ func (s Server) privateClaimShieldedPayoutConfig(c *fiber.Ctx) error {
 		"chainId":      s.cfg.ShieldedPayoutPoolChainID,
 		"poolAddress":  defaultPoolAddress,
 		"pools":        s.shieldedPayoutPools(),
-		"tokenAddress": strings.ToLower(strings.TrimSpace(s.cfg.WelcomeTokenContract)),
+		"tokenAddress": strings.ToLower(strings.TrimSpace(s.activeTokenContract(c.Context()))),
 		"denomination": defaultDenomination,
 		"version":      "budol-shielded-payout-v1",
 	})
@@ -203,7 +204,7 @@ func (s Server) submitShieldedWithdrawalProof(c *fiber.Ctx) error {
 	if len(request.VK) == 0 || string(request.VK) == "null" {
 		return fiber.NewError(fiber.StatusBadRequest, "vk is required")
 	}
-	poolAddress, denomination, err := s.validateShieldedWithdrawalPublicSignals(request.PublicSignals, request.NoteCommitment, request.NullifierHash, request.Recipient)
+	poolAddress, denomination, err := s.validateShieldedWithdrawalPublicSignals(c.Context(), request.PublicSignals, request.NoteCommitment, request.NullifierHash, request.Recipient)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
@@ -211,7 +212,7 @@ func (s Server) submitShieldedWithdrawalProof(c *fiber.Ctx) error {
 	if proofSystem == "" {
 		proofSystem = "groth16"
 	}
-	context, _ := s.shieldedWithdrawalProofContext(request.NoteCommitment, request.NullifierHash, request.Recipient, poolAddress, denomination)
+	context, _ := s.shieldedWithdrawalProofContext(c.Context(), request.NoteCommitment, request.NullifierHash, request.Recipient, poolAddress, denomination)
 	submission, err := s.gmrEngine.SubmitZKProof(c.Context(), gmrengine.ZKProofSubmitRequest{
 		Context:       context,
 		DomainID:      1,
@@ -281,7 +282,7 @@ func (s Server) withdrawShieldedPayout(c *fiber.Ctx) error {
 		if len(request.PublicSignals) == 0 || string(request.PublicSignals) == "null" {
 			return fiber.NewError(fiber.StatusBadRequest, "publicSignals is required")
 		}
-		if _, _, err := s.validateShieldedWithdrawalPublicSignals(request.PublicSignals, request.NoteCommitment, request.NullifierHash, request.Recipient); err != nil {
+		if _, _, err := s.validateShieldedWithdrawalPublicSignals(c.Context(), request.PublicSignals, request.NoteCommitment, request.NullifierHash, request.Recipient); err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 	} else {
@@ -289,11 +290,11 @@ func (s Server) withdrawShieldedPayout(c *fiber.Ctx) error {
 		if err != nil {
 			return fiber.NewError(fiber.StatusBadGateway, err.Error())
 		}
-		if err := s.validateShieldedWithdrawalProof(submission, request.NoteCommitment, request.NullifierHash, request.Recipient); err != nil {
+		if err := s.validateShieldedWithdrawalProof(c.Context(), submission, request.NoteCommitment, request.NullifierHash, request.Recipient); err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 	}
-	poolAddress, denomination, err := s.validateShieldedWithdrawalPublicSignals(request.PublicSignals, request.NoteCommitment, request.NullifierHash, request.Recipient)
+	poolAddress, denomination, err := s.validateShieldedWithdrawalPublicSignals(c.Context(), request.PublicSignals, request.NoteCommitment, request.NullifierHash, request.Recipient)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
@@ -494,7 +495,7 @@ func (s Server) executeShieldedWithdrawal(ctx context.Context, withdrawal store.
 		if err != nil {
 			return shieldedWithdrawalExecutionResult{}, err
 		}
-		if err := s.validateShieldedWithdrawalProof(submission, withdrawal.NoteCommitment, withdrawal.NullifierHash, withdrawal.Recipient); err != nil {
+		if err := s.validateShieldedWithdrawalProof(ctx, submission, withdrawal.NoteCommitment, withdrawal.NullifierHash, withdrawal.Recipient); err != nil {
 			return shieldedWithdrawalExecutionResult{}, err
 		}
 		if strings.TrimSpace(withdrawal.ZKProofSubmissionRef) == "" {
@@ -563,7 +564,7 @@ func (s Server) creditShieldedPayout(ctx context.Context, payoutAmount string, n
 		ABI:             erc20ApproveABI,
 		Args:            []string{poolAddress, denomination},
 		ChainID:         s.cfg.ShieldedPayoutPoolChainID,
-		ContractAddress: s.cfg.WelcomeTokenContract,
+		ContractAddress: s.activeTokenContract(ctx),
 		FunctionName:    "approve",
 	})
 	if err != nil {
@@ -603,6 +604,19 @@ func (s Server) creditShieldedPayout(ctx context.Context, payoutAmount string, n
 	return shieldedPayoutCreditResult{PayoutStatus: status, TransactionIDs: transactionIDs}, nil
 }
 
+func (s Server) creditShieldedPayoutCollateralized(ctx context.Context, payoutAmount string, noteCommitment string, liabilityRelease float64) (shieldedPayoutCreditResult, error) {
+	amount, err := strconv.ParseFloat(strings.TrimSpace(payoutAmount), 64)
+	if err != nil || amount <= 0 {
+		return shieldedPayoutCreditResult{}, errors.New("invalid shielded payout amount")
+	}
+	s.collateralMu.Lock()
+	defer s.collateralMu.Unlock()
+	if err := s.ensureCollateralOutflow(ctx, amount, liabilityRelease); err != nil {
+		return shieldedPayoutCreditResult{}, err
+	}
+	return s.creditShieldedPayout(ctx, payoutAmount, noteCommitment)
+}
+
 func (s Server) shieldedPayoutPoolForDenomination(denomination string) (string, string, bool) {
 	denomination = strings.TrimSpace(denomination)
 	for _, pool := range s.cfg.ShieldedPayoutPools {
@@ -616,15 +630,24 @@ func (s Server) shieldedPayoutPoolForDenomination(denomination string) (string, 
 	return "", "", false
 }
 
-func (s Server) validateShieldedWithdrawalProof(submission gmrengine.ZKProofSubmission, noteCommitment string, nullifierHash string, recipient string) error {
+func (s Server) shieldedPayoutPoolForAmount(payoutAmount string) (string, string, bool, error) {
+	payoutQuantity, err := thirdweb.TokenQuantity(strings.TrimSpace(payoutAmount), s.cfg.WelcomeTokenDecimals)
+	if err != nil {
+		return "", "", false, err
+	}
+	poolAddress, denomination, ok := s.shieldedPayoutPoolForDenomination(payoutQuantity)
+	return poolAddress, denomination, ok, nil
+}
+
+func (s Server) validateShieldedWithdrawalProof(ctx context.Context, submission gmrengine.ZKProofSubmission, noteCommitment string, nullifierHash string, recipient string) error {
 	if submission.Status != "submitted" && submission.Status != "finalized" {
 		return errors.New("zk proof submission is not verified yet")
 	}
-	poolAddress, denomination, err := s.validateShieldedWithdrawalPublicSignals(json.RawMessage(submission.PublicSignals), noteCommitment, nullifierHash, recipient)
+	poolAddress, denomination, err := s.validateShieldedWithdrawalPublicSignals(ctx, json.RawMessage(submission.PublicSignals), noteCommitment, nullifierHash, recipient)
 	if err != nil {
 		return err
 	}
-	expectedRaw, err := s.shieldedWithdrawalProofContext(noteCommitment, nullifierHash, recipient, poolAddress, denomination)
+	expectedRaw, err := s.shieldedWithdrawalProofContext(ctx, noteCommitment, nullifierHash, recipient, poolAddress, denomination)
 	if err != nil {
 		return err
 	}
@@ -644,7 +667,7 @@ func (s Server) validateShieldedWithdrawalProof(submission gmrengine.ZKProofSubm
 	return nil
 }
 
-func (s Server) validateShieldedWithdrawalPublicSignals(raw json.RawMessage, noteCommitment string, nullifierHash string, recipient string) (string, string, error) {
+func (s Server) validateShieldedWithdrawalPublicSignals(ctx context.Context, raw json.RawMessage, noteCommitment string, nullifierHash string, recipient string) (string, string, error) {
 	signals, err := parsePrivateClaimPublicSignals(raw)
 	if err != nil {
 		return "", "", err
@@ -654,7 +677,7 @@ func (s Server) validateShieldedWithdrawalPublicSignals(raw json.RawMessage, not
 		bytes32ToFieldString(nullifierHash),
 		evmAddressToFieldString(recipient),
 		fmt.Sprintf("%d", s.cfg.ShieldedPayoutPoolChainID),
-		evmAddressToFieldString(s.cfg.WelcomeTokenContract),
+		evmAddressToFieldString(s.activeTokenContract(ctx)),
 	}
 	if len(signals) < 7 {
 		return "", "", errors.New("zk proof public signals are missing shielded withdrawal fields")
@@ -680,7 +703,7 @@ func (s Server) shieldedPayoutPoolFromPublicSignalFields(poolAddressField string
 	return "", "", false
 }
 
-func (s Server) shieldedWithdrawalProofContext(noteCommitment string, nullifierHash string, recipient string, poolAddress string, denomination string) (json.RawMessage, error) {
+func (s Server) shieldedWithdrawalProofContext(ctx context.Context, noteCommitment string, nullifierHash string, recipient string, poolAddress string, denomination string) (json.RawMessage, error) {
 	payload := fiber.Map{
 		"chainId":        s.cfg.ShieldedPayoutPoolChainID,
 		"circuit":        "shielded_withdrawal",
@@ -691,7 +714,7 @@ func (s Server) shieldedWithdrawalProofContext(noteCommitment string, nullifierH
 		"nullifierHash":  strings.ToLower(strings.TrimSpace(nullifierHash)),
 		"poolAddress":    strings.ToLower(strings.TrimSpace(poolAddress)),
 		"recipient":      strings.ToLower(strings.TrimSpace(recipient)),
-		"tokenAddress":   strings.ToLower(strings.TrimSpace(s.cfg.WelcomeTokenContract)),
+		"tokenAddress":   strings.ToLower(strings.TrimSpace(s.activeTokenContract(ctx))),
 	}
 	return json.Marshal(payload)
 }

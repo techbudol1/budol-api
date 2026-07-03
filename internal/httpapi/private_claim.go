@@ -142,7 +142,7 @@ func (s Server) claimPrivatePayout(c *fiber.Ctx) error {
 	if err := validatePrivateClaimProof(submission, root, expectedOutcome, nullifierHash); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
-	if err := s.validatePrivateClaimProofContext(submission, trade, root, nullifierHash); err != nil {
+	if err := s.validatePrivateClaimProofContext(c.Context(), submission, trade, root, nullifierHash); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 	if err := s.requirePrivateClaimRegistryForStrictClaims(); err != nil {
@@ -151,7 +151,24 @@ func (s Server) claimPrivatePayout(c *fiber.Ctx) error {
 	if err := s.requireShieldedPayoutForStrictClaims(); err != nil {
 		return fiber.NewError(fiber.StatusBadGateway, err.Error())
 	}
-	if s.shieldedPayoutConfigured() && !isBytes32Hex(request.ShieldedNoteCommitment) {
+	payoutAmount := settlementAmountString(trade.SettlementPayout)
+	shieldedPayout := false
+	directPayoutFallback := false
+	if s.shieldedPayoutConfigured() {
+		_, _, supported, err := s.shieldedPayoutPoolForAmount(payoutAmount)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, err.Error())
+		}
+		switch {
+		case supported:
+			shieldedPayout = true
+		case s.cfg.ShieldedPayoutDirectFallback:
+			directPayoutFallback = true
+		default:
+			return fiber.NewError(fiber.StatusUnprocessableEntity, "this payout amount is not supported by a configured shielded pool")
+		}
+	}
+	if shieldedPayout && !isBytes32Hex(request.ShieldedNoteCommitment) {
 		return fiber.NewError(fiber.StatusBadRequest, "shieldedNoteCommitment is required for shielded payouts")
 	}
 
@@ -160,22 +177,27 @@ func (s Server) claimPrivatePayout(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 
-	registryTransactionID, registryStatus, registryErr := s.registerPrivateClaimOnRegistry(c.Context(), reservedTrade, root, nullifierHash, request.ZKProofSubmissionID)
-	if registryErr != nil {
-		claim, reservedTrade, _ = s.store.CompletePrivateClaimPayout(c.Context(), user.ID, claim.ID, nil, "failed", registryErr.Error())
-		return fiber.NewError(fiber.StatusBadGateway, registryErr.Error())
-	}
-	if registryTransactionID != "" {
-		claim, reservedTrade, _ = s.store.RecordPrivateClaimRegistryTransaction(c.Context(), user.ID, claim.ID, registryTransactionID, registryStatus, "")
+	registryTransactionID := claim.RegistryTransactionID
+	registryStatus := claim.RegistryStatus
+	if registryTransactionID == "" || strings.EqualFold(registryStatus, "failed") {
+		var registryErr error
+		registryTransactionID, registryStatus, registryErr = s.registerPrivateClaimOnRegistry(c.Context(), reservedTrade, root, nullifierHash, request.ZKProofSubmissionID)
+		if registryErr != nil {
+			claim, reservedTrade, _ = s.store.CompletePrivateClaimPayout(c.Context(), user.ID, claim.ID, nil, "failed", registryErr.Error())
+			return fiber.NewError(fiber.StatusBadGateway, registryErr.Error())
+		}
+		if registryTransactionID != "" {
+			claim, reservedTrade, _ = s.store.RecordPrivateClaimRegistryTransaction(c.Context(), user.ID, claim.ID, registryTransactionID, registryStatus, "")
+		}
 	}
 
 	transactionIDs := []string{}
 	payoutStatus := ""
 	payoutError := ""
-	shieldedPayout := false
-	if s.shieldedPayoutConfigured() {
-		shieldedPayout = true
-		creditResult, payoutErr := s.creditShieldedPayout(c.Context(), settlementAmountString(reservedTrade.SettlementPayout), request.ShieldedNoteCommitment)
+	payoutMode := "direct"
+	if shieldedPayout {
+		payoutMode = "shielded"
+		creditResult, payoutErr := s.creditShieldedPayoutCollateralized(c.Context(), settlementAmountString(reservedTrade.SettlementPayout), request.ShieldedNoteCommitment, reservedTrade.SettlementPayout)
 		transactionIDs = creditResult.TransactionIDs
 		payoutStatus = creditResult.PayoutStatus
 		payoutError = creditResult.PayoutError
@@ -187,15 +209,18 @@ func (s Server) claimPrivatePayout(c *fiber.Ctx) error {
 			payoutStatus = "submitted"
 		}
 	} else {
-		result, _, payoutErr := s.sendWalletTokens(c, []walletRecipientInput{
+		result, _, payoutErr := s.sendWalletTokensWithRelease(c, []walletRecipientInput{
 			{Address: user.WalletAddress, Amount: settlementAmountString(reservedTrade.SettlementPayout)},
-		})
+		}, reservedTrade.SettlementPayout)
 		if payoutErr != nil {
 			claim, reservedTrade, _ = s.store.CompletePrivateClaimPayout(c.Context(), user.ID, claim.ID, nil, "failed", payoutErr.Error())
 			return fiber.NewError(fiber.StatusBadGateway, payoutErr.Error())
 		}
 		transactionIDs = result.TransactionIDs
 		payoutStatus, payoutError = s.waitForThirdwebTransactionStatus(c, transactionIDs)
+		if directPayoutFallback {
+			payoutMode = "direct_fallback"
+		}
 	}
 	claim, reservedTrade, err = s.store.CompletePrivateClaimPayout(c.Context(), user.ID, claim.ID, transactionIDs, payoutStatus, payoutError)
 	if err != nil {
@@ -204,6 +229,8 @@ func (s Server) claimPrivatePayout(c *fiber.Ctx) error {
 	notificationDetail := reservedTrade.PollTitle + ": " + settlementAmountString(reservedTrade.SettlementPayout) + " BUDOL payout status is " + payoutStatus + "."
 	if shieldedPayout {
 		notificationDetail = reservedTrade.PollTitle + ": shielded payout note credited. Store your withdrawal note before withdrawing."
+	} else if directPayoutFallback {
+		notificationDetail = reservedTrade.PollTitle + ": the private ZK claim was paid directly because no shielded pool supports the exact payout amount."
 	}
 	_, _ = s.store.CreateNotification(c.Context(), user.ID, "private_claim", "Private claim submitted", notificationDetail, "/portfolio")
 
@@ -217,6 +244,7 @@ func (s Server) claimPrivatePayout(c *fiber.Ctx) error {
 		"trade":                 reservedTrade,
 		"payoutStatus":          payoutStatus,
 		"payoutError":           payoutError,
+		"payoutMode":            payoutMode,
 		"registryTransactionId": registryTransactionID,
 		"registryStatus":        registryStatus,
 		"shieldedPayout":        shieldedPayout,
@@ -276,7 +304,7 @@ func (s Server) submitPrivateClaimProof(c *fiber.Ctx) error {
 	if err := validatePrivateClaimPublicSignals(request.PublicSignals, root, expectedOutcome, nullifierHash); err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
-	context, _ := s.privateClaimProofContext(trade, root, nullifierHash)
+	context, _ := s.privateClaimProofContext(c.Context(), trade, root, nullifierHash)
 	domainID := request.DomainID
 	if domainID == 0 {
 		domainID = 1
@@ -302,7 +330,7 @@ func (s Server) submitPrivateClaimProof(c *fiber.Ctx) error {
 	})
 }
 
-func (s Server) privateClaimProofContext(trade store.Trade, root string, nullifierHash string) (json.RawMessage, error) {
+func (s Server) privateClaimProofContext(ctx context.Context, trade store.Trade, root string, nullifierHash string) (json.RawMessage, error) {
 	payload := fiber.Map{
 		"chainId":        s.cfg.WelcomeTokenChainID,
 		"circuit":        "private_winning_claim",
@@ -313,14 +341,14 @@ func (s Server) privateClaimProofContext(trade store.Trade, root string, nullifi
 		"pollSlug":       trade.PollSlug,
 		"registry":       strings.ToLower(strings.TrimSpace(s.cfg.PrivateClaimRegistryAddress)),
 		"root":           strings.TrimSpace(root),
-		"tokenAddress":   strings.ToLower(strings.TrimSpace(s.cfg.WelcomeTokenContract)),
+		"tokenAddress":   strings.ToLower(strings.TrimSpace(s.activeTokenContract(ctx))),
 		"tradeId":        trade.ID,
 	}
 	return json.Marshal(payload)
 }
 
-func (s Server) validatePrivateClaimProofContext(submission gmrengine.ZKProofSubmission, trade store.Trade, root string, nullifierHash string) error {
-	expectedRaw, err := s.privateClaimProofContext(trade, root, nullifierHash)
+func (s Server) validatePrivateClaimProofContext(ctx context.Context, submission gmrengine.ZKProofSubmission, trade store.Trade, root string, nullifierHash string) error {
+	expectedRaw, err := s.privateClaimProofContext(ctx, trade, root, nullifierHash)
 	if err != nil {
 		return err
 	}

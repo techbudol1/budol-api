@@ -232,6 +232,45 @@ func (s *MemgraphUserStore) ReservePrivateClaim(ctx context.Context, userID stri
 	defer session.Close(ctx)
 
 	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		retryRows, err := tx.Run(ctx, privateClaimReturnQuery(`
+MATCH (u:User {id: $userID})-[:PLACED_TRADE]->(t:Trade {id: $tradeID})-[:ON_POLL]->(p:Poll)
+MATCH (t)-[:HAS_PRIVATE_CLAIM]->(claim:PrivateClaim {nullifierHash: $nullifierHash})
+WHERE claim.userId = $userID
+  AND claim.tradeId = $tradeID
+  AND claim.leaf = $leaf
+  AND claim.status = "failed"
+  AND size(coalesce(claim.transactionIds, [])) = 0
+  AND coalesce(t.payoutStatus, "") IN ["claim_failed", "failed"]
+SET claim.status = "reserved",
+  claim.payoutStatus = "pending",
+  claim.payoutError = "",
+  claim.zkProofSubmissionId = $zkProofSubmissionID,
+  claim.root = $root,
+  claim.updatedAt = $now,
+  t.payoutStatus = "claim_pending",
+  t.payoutError = "",
+  t.privateClaimRoot = $root,
+  t.updatedAt = $now
+`), map[string]any{
+			"userID":              strings.TrimSpace(userID),
+			"tradeID":             strings.TrimSpace(tradeID),
+			"leaf":                strings.TrimSpace(leaf),
+			"root":                strings.TrimSpace(root),
+			"nullifierHash":       strings.TrimSpace(nullifierHash),
+			"zkProofSubmissionID": strings.TrimSpace(zkProofSubmissionID),
+			"now":                 now,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if retryRows.Next(ctx) {
+			record := retryRows.Record()
+			return privateClaimPayload{Claim: privateClaimFromRecord(record), Trade: tradeFromRecord(record)}, nil
+		}
+		if err := retryRows.Err(); err != nil {
+			return nil, err
+		}
+
 		rows, err := tx.Run(ctx, privateClaimReturnQuery(`
 MATCH (u:User {id: $userID})-[:PLACED_TRADE]->(t:Trade {id: $tradeID})-[:ON_POLL]->(p:Poll)
 OPTIONAL MATCH (existing:PrivateClaim {nullifierHash: $nullifierHash})

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -36,6 +37,10 @@ type Poll struct {
 	Visibility                     string   `json:"visibility"`
 	OutcomeA                       string   `json:"outcomeA"`
 	OutcomeB                       string   `json:"outcomeB"`
+	MarketGroupID                  string   `json:"marketGroupId"`
+	MarketGroupTitle               string   `json:"marketGroupTitle"`
+	MarketChoiceLabel              string   `json:"marketChoiceLabel"`
+	MarketChoiceIndex              int64    `json:"marketChoiceIndex"`
 	YesPercent                     int64    `json:"yesPercent"`
 	NoPercent                      int64    `json:"noPercent"`
 	Volume                         string   `json:"volume"`
@@ -77,33 +82,38 @@ type PollClassificationInput struct {
 }
 
 type PollInput struct {
-	Slug                  string  `json:"slug"`
-	Title                 string  `json:"title"`
-	PollType              string  `json:"pollType"`
-	ClassificationID      string  `json:"classificationId"`
-	CallName              string  `json:"callName"`
-	Region                string  `json:"region"`
-	Status                string  `json:"status"`
-	Visibility            string  `json:"visibility"`
-	OutcomeA              string  `json:"outcomeA"`
-	OutcomeB              string  `json:"outcomeB"`
-	YesPercent            int64   `json:"yesPercent"`
-	Volume                string  `json:"volume"`
-	Change                string  `json:"change"`
-	Color                 string  `json:"color"`
-	Hot                   bool    `json:"hot"`
-	Featured              bool    `json:"featured"`
-	SortOrder             int64   `json:"sortOrder"`
-	Liquidity             float64 `json:"liquidity"`
-	TradingFrozen         bool    `json:"tradingFrozen"`
-	CommentsDisabled      bool    `json:"commentsDisabled"`
-	AuditReason           string  `json:"auditReason"`
-	ResolutionSource      string  `json:"resolutionSource"`
-	ResolutionOutcome     string  `json:"resolutionOutcome"`
-	ResolutionEvidenceURL string  `json:"resolutionEvidenceUrl"`
-	ResolutionNotes       string  `json:"resolutionNotes"`
-	StartsAt              string  `json:"startsAt"`
-	EndsAt                string  `json:"endsAt"`
+	Slug                  string   `json:"slug"`
+	Title                 string   `json:"title"`
+	PollType              string   `json:"pollType"`
+	ClassificationID      string   `json:"classificationId"`
+	CallName              string   `json:"callName"`
+	Region                string   `json:"region"`
+	Status                string   `json:"status"`
+	Visibility            string   `json:"visibility"`
+	OutcomeA              string   `json:"outcomeA"`
+	OutcomeB              string   `json:"outcomeB"`
+	ChoiceLabels          []string `json:"choiceLabels"`
+	MarketGroupID         string   `json:"marketGroupId"`
+	MarketGroupTitle      string   `json:"marketGroupTitle"`
+	MarketChoiceLabel     string   `json:"marketChoiceLabel"`
+	MarketChoiceIndex     int64    `json:"marketChoiceIndex"`
+	YesPercent            int64    `json:"yesPercent"`
+	Volume                string   `json:"volume"`
+	Change                string   `json:"change"`
+	Color                 string   `json:"color"`
+	Hot                   bool     `json:"hot"`
+	Featured              bool     `json:"featured"`
+	SortOrder             int64    `json:"sortOrder"`
+	Liquidity             float64  `json:"liquidity"`
+	TradingFrozen         bool     `json:"tradingFrozen"`
+	CommentsDisabled      bool     `json:"commentsDisabled"`
+	AuditReason           string   `json:"auditReason"`
+	ResolutionSource      string   `json:"resolutionSource"`
+	ResolutionOutcome     string   `json:"resolutionOutcome"`
+	ResolutionEvidenceURL string   `json:"resolutionEvidenceUrl"`
+	ResolutionNotes       string   `json:"resolutionNotes"`
+	StartsAt              string   `json:"startsAt"`
+	EndsAt                string   `json:"endsAt"`
 }
 
 type UserUpdateInput struct {
@@ -212,11 +222,18 @@ type AdminStore interface {
 	ListPollClassifications(ctx context.Context) ([]PollClassification, error)
 	UpsertPollClassification(ctx context.Context, input PollClassificationInput) (PollClassification, error)
 	ListPolls(ctx context.Context, publicOnly bool) ([]Poll, error)
+	GetPollByID(ctx context.Context, id string) (Poll, bool, error)
 	GetPollBySlug(ctx context.Context, slug string, publicOnly bool) (Poll, bool, error)
 	UpsertPoll(ctx context.Context, input PollInput) (Poll, error)
 	UpdatePoll(ctx context.Context, id string, input PollInput) (Poll, error)
 	UpdatePollResolution(ctx context.Context, id string, status string, outcome string, resolvedBy string, resolutionSource string, evidenceURL string, notes string) (Poll, error)
+	CreateNewsCandidateIfMissing(ctx context.Context, input NewsCandidateInput) (NewsCandidate, bool, error)
+	ListNewsCandidates(ctx context.Context, status string, limit int64) ([]NewsCandidate, error)
+	GetNewsCandidate(ctx context.Context, id string) (NewsCandidate, bool, error)
+	UpdatePendingNewsCandidate(ctx context.Context, id string, input NewsCandidateUpdateInput) (NewsCandidate, error)
+	ReviewNewsCandidate(ctx context.Context, id string, status string, reviewedBy string, reviewNotes string, pollID string) (NewsCandidate, error)
 	QuoteTrade(ctx context.Context, input TradeInput) (TradeQuote, error)
+	CollateralRequirement(ctx context.Context) (CollateralRequirement, error)
 	CreateTrade(ctx context.Context, user User, input TradeInput) (Trade, error)
 	QuoteCashout(ctx context.Context, userID string, input CashoutInput) (CashoutQuote, error)
 	CashoutPosition(ctx context.Context, userID string, input CashoutInput, transactionIDs []string, payoutStatus string, payoutError string) (CashoutQuote, error)
@@ -235,6 +252,12 @@ type AdminStore interface {
 	ListWatchlist(ctx context.Context, userID string) ([]WatchlistItem, error)
 	AddWatchlist(ctx context.Context, userID string, slug string) ([]WatchlistItem, bool, error)
 	RemoveWatchlist(ctx context.Context, userID string, slug string) ([]WatchlistItem, error)
+	GetMarketAlert(ctx context.Context, userID string, slug string) (MarketAlert, bool, error)
+	UpsertMarketAlert(ctx context.Context, userID string, slug string, input MarketAlertInput) (MarketAlert, error)
+	DeleteMarketAlert(ctx context.Context, userID string, slug string) error
+	NotifyMarketPriceAlerts(ctx context.Context, pollID string, exceptUserID string, oldYesPercent int64, newYesPercent int64) (int64, error)
+	NotifyMarketResolutionAlerts(ctx context.Context, pollSlug string, status string) (int64, error)
+	ProcessDueMarketClosingAlerts(ctx context.Context, now time.Time) (int64, error)
 	NotifyWatchers(ctx context.Context, pollSlug string, exceptUserID string, kind string, title string, detail string, link string) (int64, error)
 	ListAdminActivity(ctx context.Context) ([]AdminActivity, error)
 	CreateAdminActivity(ctx context.Context, input AdminActivityInput) (AdminActivity, error)
@@ -269,7 +292,7 @@ type AdminStore interface {
 	SetSystemSetting(ctx context.Context, key string, value string) error
 	ListSettlementPayoutAttempts(ctx context.Context, pollID string) ([]SettlementPayoutAttempt, error)
 	ApplyMarketAutomation(ctx context.Context) (int64, error)
-	SeedDefaults(ctx context.Context) error
+	SeedDefaults(ctx context.Context, seedDemoPolls bool) error
 }
 
 type EngineStore interface {
@@ -297,13 +320,21 @@ var defaultPolls = []PollInput{
 	{Slug: "dynasty-reform-third-reading-2026", Title: "Will the House pass a political dynasty reform bill on third reading in 2026?", PollType: "bill_passage", ClassificationID: "congress", CallName: "market", Region: "House", Status: "published", Visibility: "public", OutcomeA: "Passes", OutcomeB: "Fails", YesPercent: 27, Volume: "P2.1M", Change: "-1.8%", Color: "green", SortOrder: 20, Liquidity: defaultMarketLiquidity},
 	{Slug: "metro-manila-four-day-workweek-pilot", Title: "Will any Metro Manila city announce a four-day workweek pilot this quarter?", PollType: "deadline", ClassificationID: "lgu", CallName: "market", Region: "Metro Manila", Status: "published", Visibility: "public", OutcomeA: "Announced", OutcomeB: "Not announced", YesPercent: 61, Volume: "P5.7M", Change: "+3.5%", Color: "blue", Hot: true, SortOrder: 30, Liquidity: defaultMarketLiquidity},
 	{Slug: "online-voter-registration-year-end", Title: "Will online voter registration expansion be formally rolled out before year-end?", PollType: "deadline", ClassificationID: "policy", CallName: "market", Region: "Comelec", Status: "published", Visibility: "public", OutcomeA: "Rolled out", OutcomeB: "Delayed", YesPercent: 54, Volume: "P3.9M", Change: "+0.9%", Color: "yellow", SortOrder: 40, Liquidity: defaultMarketLiquidity},
+	{Slug: "positive-net-satisfaction-next-sws", Title: "Will the President post a positive net satisfaction rating in the next SWS national survey?", PollType: "approval_rating", ClassificationID: "elections", CallName: "approval line", Region: "National", Status: "published", Visibility: "public", OutcomeA: "Positive", OutcomeB: "Not positive", YesPercent: 49, Volume: "P1.8M", Change: "+2.4%", Color: "yellow", SortOrder: 50, Liquidity: defaultMarketLiquidity},
+	{Slug: "overseas-voter-turnout-over-35", Title: "Will overseas voter turnout exceed 35% in the next national election?", PollType: "turnout", ClassificationID: "elections", CallName: "turnout line", Region: "Overseas", Status: "published", Visibility: "public", OutcomeA: "Over 35%", OutcomeB: "35% or less", YesPercent: 38, Volume: "P1.2M", Change: "-0.7%", Color: "green", SortOrder: 60, Liquidity: defaultMarketLiquidity},
+	{Slug: "supreme-court-election-rule-tro", Title: "Will the Supreme Court issue a TRO on a major election rule before campaign season?", PollType: "court_decision", ClassificationID: "policy", CallName: "case market", Region: "Supreme Court", Status: "published", Visibility: "public", OutcomeA: "Issued", OutcomeB: "Not issued", YesPercent: 44, Volume: "P2.6M", Change: "+1.1%", Color: "blue", SortOrder: 70, Liquidity: defaultMarketLiquidity},
+	{Slug: "new-comelec-commissioner-before-filing-week", Title: "Will a new Comelec commissioner be appointed before the next filing week?", PollType: "appointment", ClassificationID: "policy", CallName: "appointment market", Region: "Comelec", Status: "published", Visibility: "public", OutcomeA: "Appointed", OutcomeB: "Not appointed", YesPercent: 57, Volume: "P3.1M", Change: "+4.0%", Color: "coral", SortOrder: 80, Liquidity: defaultMarketLiquidity},
+	{Slug: "transport-subsidy-tranche-before-quarter-end", Title: "Will a named transport subsidy tranche be released before quarter-end?", PollType: "budget_release", ClassificationID: "policy", CallName: "funding market", Region: "DOTr", Status: "published", Visibility: "public", OutcomeA: "Released", OutcomeB: "Not released", YesPercent: 63, Volume: "P2.4M", Change: "+0.6%", Color: "green", SortOrder: 90, Liquidity: defaultMarketLiquidity},
 }
 
-func (s *MemgraphUserStore) SeedDefaults(ctx context.Context) error {
+func (s *MemgraphUserStore) SeedDefaults(ctx context.Context, seedDemoPolls bool) error {
 	for _, classification := range defaultClassifications {
 		if _, err := s.UpsertPollClassification(ctx, classification); err != nil {
 			return err
 		}
+	}
+	if !seedDemoPolls {
+		return nil
 	}
 	for _, poll := range defaultPolls {
 		if _, ok, err := s.GetPollBySlug(ctx, poll.Slug, false); err != nil {
@@ -328,12 +359,15 @@ MATCH (u:User)
 RETURN
   u.id AS id,
   u.walletAddress AS walletAddress,
+  coalesce(u.publicAlias, "") AS publicAlias,
   coalesce(u.thirdwebUserId, "") AS thirdwebUserId,
   coalesce(u.authProvider, "") AS authProvider,
+  coalesce(u.authType, "") AS authType,
   coalesce(u.email, "") AS email,
   coalesce(u.phone, "") AS phone,
   coalesce(u.role, "user") AS role,
   coalesce(u.status, "active") AS status,
+  coalesce(u.walletCustody, "") AS walletCustody,
   coalesce(u.notes, "") AS notes,
   u.createdAt AS createdAt,
   u.lastLoginAt AS lastLoginAt,
@@ -429,7 +463,7 @@ RETURN
   u.id AS userId,
   p.id AS pollId,
   p.slug AS pollSlug,
-  coalesce(u.walletAddress, "") AS actor,
+  CASE WHEN trim(coalesce(u.publicAlias, "")) = "" THEN "Anonymous Trader" ELSE u.publicAlias END AS actor,
   coalesce(m.body, "") AS body,
   coalesce(m.status, "visible") AS status,
   coalesce(m.reportCount, 0) AS reportCount,
@@ -473,12 +507,15 @@ SET u.role = $role, u.status = $status, u.notes = $notes, u.updatedAt = $now
 RETURN
   u.id AS id,
   u.walletAddress AS walletAddress,
+  coalesce(u.publicAlias, "") AS publicAlias,
   coalesce(u.thirdwebUserId, "") AS thirdwebUserId,
   coalesce(u.authProvider, "") AS authProvider,
+  coalesce(u.authType, "") AS authType,
   coalesce(u.email, "") AS email,
   coalesce(u.phone, "") AS phone,
   coalesce(u.role, "user") AS role,
   coalesce(u.status, "active") AS status,
+  coalesce(u.walletCustody, "") AS walletCustody,
   coalesce(u.notes, "") AS notes,
   u.createdAt AS createdAt,
   u.lastLoginAt AS lastLoginAt,
@@ -720,10 +757,8 @@ func (s *MemgraphUserStore) GetPollBySlug(ctx context.Context, slug string, publ
 MATCH (p:Poll {slug: $slug})-[:CLASSIFIED_AS]->(c:PollClassification)
 `
 	if publicOnly {
-		query += `WHERE p.status = "published"
+		query += `WHERE p.status IN ["published", "paused", "resolved", "cancelled"]
   AND p.visibility = "public"
-  AND (coalesce(p.startsAt, "") = "" OR p.startsAt <= $now)
-  AND (coalesce(p.endsAt, "") = "" OR p.endsAt >= $now)
 `
 	}
 	query += pollReturnCypher()
@@ -755,6 +790,37 @@ MATCH (p:Poll {slug: $slug})-[:CLASSIFIED_AS]->(c:PollClassification)
 	return result.(Poll), true, nil
 }
 
+func (s *MemgraphUserStore) GetPollByID(ctx context.Context, id string) (Poll, bool, error) {
+	if _, err := s.ApplyMarketAutomation(ctx); err != nil {
+		return Poll{}, false, err
+	}
+	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeRead})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rows, err := tx.Run(ctx, `
+MATCH (p:Poll {id: $id})-[:CLASSIFIED_AS]->(c:PollClassification)
+`+pollReturnCypher(), map[string]any{"id": strings.TrimSpace(id)})
+		if err != nil {
+			return nil, err
+		}
+		if rows.Next(ctx) {
+			return pollFromRecord(rows.Record()), nil
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return Poll{}, false, err
+	}
+	if result == nil {
+		return Poll{}, false, nil
+	}
+	return result.(Poll), true, nil
+}
+
 func (s *MemgraphUserStore) UpsertPoll(ctx context.Context, input PollInput) (Poll, error) {
 	return s.savePoll(ctx, "", input)
 }
@@ -765,6 +831,17 @@ func (s *MemgraphUserStore) UpdatePoll(ctx context.Context, id string, input Pol
 
 func (s *MemgraphUserStore) savePoll(ctx context.Context, id string, input PollInput) (Poll, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
+	startsAt, err := normalizePollTimestamp(input.StartsAt)
+	if err != nil {
+		return Poll{}, fmt.Errorf("invalid start date: %w", err)
+	}
+	endsAt, err := normalizePollTimestamp(input.EndsAt)
+	if err != nil {
+		return Poll{}, fmt.Errorf("invalid end date: %w", err)
+	}
+	if startsAt != "" && endsAt != "" && endsAt <= startsAt {
+		return Poll{}, errors.New("end date must be after start date")
+	}
 	slug := slugify(input.Slug)
 	if slug == "" {
 		slug = slugify(input.Title)
@@ -790,6 +867,10 @@ func (s *MemgraphUserStore) savePoll(ctx context.Context, id string, input PollI
 		"visibility":            defaultString(input.Visibility, "public"),
 		"outcomeA":              defaultString(input.OutcomeA, "Yes"),
 		"outcomeB":              defaultString(input.OutcomeB, "No"),
+		"marketGroupId":         strings.TrimSpace(input.MarketGroupID),
+		"marketGroupTitle":      strings.TrimSpace(input.MarketGroupTitle),
+		"marketChoiceLabel":     strings.TrimSpace(input.MarketChoiceLabel),
+		"marketChoiceIndex":     input.MarketChoiceIndex,
 		"yesPercent":            yesPercent,
 		"noPercent":             100 - yesPercent,
 		"volume":                defaultString(input.Volume, "P0"),
@@ -808,8 +889,8 @@ func (s *MemgraphUserStore) savePoll(ctx context.Context, id string, input PollI
 		"resolutionOutcome":     input.ResolutionOutcome,
 		"resolutionEvidenceUrl": input.ResolutionEvidenceURL,
 		"resolutionNotes":       input.ResolutionNotes,
-		"startsAt":              input.StartsAt,
-		"endsAt":                input.EndsAt,
+		"startsAt":              startsAt,
+		"endsAt":                endsAt,
 		"now":                   now,
 	}
 
@@ -836,6 +917,10 @@ SET
   p.visibility = $visibility,
   p.outcomeA = $outcomeA,
   p.outcomeB = $outcomeB,
+  p.marketGroupId = $marketGroupId,
+  p.marketGroupTitle = $marketGroupTitle,
+  p.marketChoiceLabel = $marketChoiceLabel,
+  p.marketChoiceIndex = $marketChoiceIndex,
   p.yesPercent = $yesPercent,
   p.noPercent = $noPercent,
   p.volume = $volume,
@@ -881,6 +966,24 @@ MERGE (p)-[:CLASSIFIED_AS]->(c)
 	return result.(Poll), nil
 }
 
+func normalizePollTimestamp(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", nil
+	}
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed.UTC().Format(time.RFC3339), nil
+	}
+
+	manila := time.FixedZone("Asia/Manila", 8*60*60)
+	for _, layout := range []string{"2006-01-02T15:04", "2006-01-02T15:04:05"} {
+		if parsed, err := time.ParseInLocation(layout, value, manila); err == nil {
+			return parsed.UTC().Format(time.RFC3339), nil
+		}
+	}
+	return "", errors.New("use an ISO 8601 date and time")
+}
+
 func (s *MemgraphUserStore) UpdatePollResolution(ctx context.Context, id string, status string, outcome string, resolvedBy string, resolutionSource string, evidenceURL string, notes string) (Poll, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	status = defaultString(status, "paused")
@@ -907,7 +1010,7 @@ SET
   p.resolutionEvidenceUrl = CASE WHEN $evidenceURL <> "" THEN $evidenceURL ELSE coalesce(p.resolutionEvidenceUrl, "") END,
   p.resolutionNotes = CASE WHEN $notes <> "" THEN $notes ELSE coalesce(p.resolutionNotes, "") END,
   p.resolvedBy = CASE WHEN $status IN ["resolved", "cancelled"] THEN $resolvedBy ELSE coalesce(p.resolvedBy, "") END,
-  p.resolvedAt = CASE WHEN $status = "resolved" THEN $now ELSE "" END,
+  p.resolvedAt = CASE WHEN $status IN ["resolved", "cancelled"] THEN $now ELSE "" END,
   p.automationState = CASE WHEN $status = "paused" THEN coalesce(p.automationState, "") ELSE "" END,
   p.updatedAt = $now
 `+pollReturnCypher(), map[string]any{
@@ -952,6 +1055,10 @@ RETURN
   coalesce(p.visibility, "public") AS visibility,
   coalesce(p.outcomeA, "Yes") AS outcomeA,
   coalesce(p.outcomeB, "No") AS outcomeB,
+  coalesce(p.marketGroupId, "") AS marketGroupId,
+  coalesce(p.marketGroupTitle, "") AS marketGroupTitle,
+  coalesce(p.marketChoiceLabel, "") AS marketChoiceLabel,
+  coalesce(p.marketChoiceIndex, 0) AS marketChoiceIndex,
   coalesce(p.yesPercent, 50) AS yesPercent,
   coalesce(p.noPercent, 50) AS noPercent,
   coalesce(p.volume, "P0") AS volume,
@@ -1012,6 +1119,10 @@ func pollFromRecord(record *neo4j.Record) Poll {
 		Visibility:                     stringValue(record, "visibility"),
 		OutcomeA:                       stringValue(record, "outcomeA"),
 		OutcomeB:                       stringValue(record, "outcomeB"),
+		MarketGroupID:                  stringValue(record, "marketGroupId"),
+		MarketGroupTitle:               stringValue(record, "marketGroupTitle"),
+		MarketChoiceLabel:              stringValue(record, "marketChoiceLabel"),
+		MarketChoiceIndex:              intValue(record, "marketChoiceIndex"),
 		YesPercent:                     intValue(record, "yesPercent"),
 		NoPercent:                      intValue(record, "noPercent"),
 		Volume:                         stringValue(record, "volume"),

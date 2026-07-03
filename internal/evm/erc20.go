@@ -34,6 +34,15 @@ type TokenBalance struct {
 	FetchedAt     string `json:"fetchedAt"`
 }
 
+type NativeBalance struct {
+	Raw           string `json:"raw"`
+	Formatted     string `json:"formatted"`
+	Decimals      int    `json:"decimals"`
+	WalletAddress string `json:"walletAddress"`
+	Symbol        string `json:"symbol"`
+	FetchedAt     string `json:"fetchedAt"`
+}
+
 type TokenTransfer struct {
 	Direction       string `json:"direction"`
 	Counterparty    string `json:"counterparty"`
@@ -43,6 +52,12 @@ type TokenTransfer struct {
 	BlockNumber     uint64 `json:"blockNumber"`
 	LogIndex        uint64 `json:"logIndex"`
 	Timestamp       string `json:"timestamp"`
+}
+
+type TransactionReceiptStatus struct {
+	Confirmed bool
+	Failed    bool
+	Pending   bool
 }
 
 type receiptLog struct {
@@ -57,6 +72,46 @@ func NewClient(rpcURL string) *Client {
 		httpClient: &http.Client{Timeout: 8 * time.Second},
 		rpcURL:     strings.TrimSpace(rpcURL),
 	}
+}
+
+func (c *Client) NativeBalance(ctx context.Context, walletAddress string) (NativeBalance, error) {
+	walletAddress = strings.TrimSpace(walletAddress)
+	if c.rpcURL == "" {
+		return NativeBalance{}, errors.New("RPC URL is not configured")
+	}
+	if !evmAddressPattern.MatchString(walletAddress) {
+		return NativeBalance{}, errors.New("invalid wallet address")
+	}
+
+	var rpcResponse struct {
+		Result string `json:"result"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := c.rpc(ctx, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "eth_getBalance",
+		"params":  []any{walletAddress, "latest"},
+	}, &rpcResponse); err != nil {
+		return NativeBalance{}, err
+	}
+	if rpcResponse.Error != nil {
+		return NativeBalance{}, fmt.Errorf("RPC native balance read failed: %s", rpcResponse.Error.Message)
+	}
+	value, err := parseHexBigInt(rpcResponse.Result)
+	if err != nil {
+		return NativeBalance{}, err
+	}
+	return NativeBalance{
+		Raw:           value.String(),
+		Formatted:     formatUnits(value, 18),
+		Decimals:      18,
+		WalletAddress: walletAddress,
+		Symbol:        "ETH",
+		FetchedAt:     time.Now().UTC().Format(time.RFC3339),
+	}, nil
 }
 
 func (c *Client) ERC20TransferHistory(ctx context.Context, tokenAddress string, walletAddress string, decimals int) ([]TokenTransfer, error) {
@@ -321,6 +376,43 @@ func (c *Client) ERC20TransferInTransaction(ctx context.Context, tokenAddress st
 		}
 	}
 	return false, false, nil
+}
+
+func (c *Client) TransactionReceiptStatus(ctx context.Context, transactionHash string) (TransactionReceiptStatus, error) {
+	transactionHash = strings.ToLower(strings.TrimSpace(transactionHash))
+	if c.rpcURL == "" {
+		return TransactionReceiptStatus{}, errors.New("RPC URL is not configured")
+	}
+	if !strings.HasPrefix(transactionHash, "0x") || len(transactionHash) != 66 {
+		return TransactionReceiptStatus{}, errors.New("invalid transaction hash")
+	}
+
+	var rpcResponse struct {
+		Result *struct {
+			Status string `json:"status"`
+		} `json:"result"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := c.rpc(ctx, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "eth_getTransactionReceipt",
+		"params":  []any{transactionHash},
+	}, &rpcResponse); err != nil {
+		return TransactionReceiptStatus{}, err
+	}
+	if rpcResponse.Error != nil {
+		return TransactionReceiptStatus{}, fmt.Errorf("RPC transaction receipt failed: %s", rpcResponse.Error.Message)
+	}
+	if rpcResponse.Result == nil {
+		return TransactionReceiptStatus{Pending: true}, nil
+	}
+	if strings.EqualFold(rpcResponse.Result.Status, "0x1") {
+		return TransactionReceiptStatus{Confirmed: true}, nil
+	}
+	return TransactionReceiptStatus{Failed: true}, nil
 }
 
 func (c *Client) transferLogs(ctx context.Context, tokenAddress string, walletAddress string, decimals int, direction string) ([]TokenTransfer, error) {
