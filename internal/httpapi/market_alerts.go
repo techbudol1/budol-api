@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"budol/server/internal/store"
+	"github.com/techbudol1/budol-api/internal/store"
 
 	"github.com/gofiber/fiber/v2"
 )

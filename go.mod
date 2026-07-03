@@ -1,4 +1,4 @@
-module budol/server
+module github.com/techbudol1/budol-api
 
 go 1.25.1
 

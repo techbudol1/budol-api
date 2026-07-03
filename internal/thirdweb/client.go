@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"budol/server/internal/store"
+	"github.com/techbudol1/budol-api/internal/store"
 )
 
 var evmAddressPattern = regexp.MustCompile(`^0x[0-9a-fA-F]{40}$`)

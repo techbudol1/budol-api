@@ -1,0 +1,6 @@
+{
+  "circuit": "private_winning_claim",
+  "ceremony": "development-local",
+  "finalZKeyHash": "cabe32e21c13fa447c37efd1dd389024dcd443e9a7a1bd952d98676ac585a2da",
+  "productionReady": false
+}

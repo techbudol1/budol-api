@@ -1,0 +1,36 @@
+dist
+dashboard-dist
+gmr-engine/zk/private-claim/build
+.gocache
+public/client-env.js
+.wrangler
+.output
+.vercel
+.netlify
+.vinxi
+app.config.timestamp_*.js
+/engine-core/
+
+# Environment
+.env
+.env.*
+!.env.example
+!.env.*.example
+.env*.local
+
+# dependencies
+/node_modules
+
+# IDEs and editors
+/.idea
+.project
+.classpath
+*.launch
+.settings/
+
+# Temp
+gitignore
+
+# System Files
+.DS_Store
+Thumbs.db

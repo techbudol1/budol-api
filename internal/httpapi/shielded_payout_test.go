@@ -3,7 +3,7 @@ package httpapi
 import (
 	"testing"
 
-	"budol/server/internal/config"
+	"github.com/techbudol1/budol-api/internal/config"
 )
 
 func TestShieldedPayoutPoolForAmountMatchesExactBaseUnitDenomination(t *testing.T) {

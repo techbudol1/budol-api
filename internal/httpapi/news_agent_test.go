@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"budol/server/internal/store"
+	"github.com/techbudol1/budol-api/internal/store"
 )
 
 func TestValidateNewsCandidateUpdateNormalizesMultipleChoice(t *testing.T) {

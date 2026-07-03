@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"budol/server/internal/store"
-	"budol/server/internal/thirdweb"
+	"github.com/techbudol1/budol-api/internal/store"
+	"github.com/techbudol1/budol-api/internal/thirdweb"
 )
 
 var errUnderCollateralized = errors.New("operation would make payout reserves under-collateralized")

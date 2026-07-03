@@ -1,0 +1,10 @@
+.git
+.gocache
+node_modules
+dist
+dashboard-dist
+gmr-dashboard-dist
+engine-core
+.env*
+!.env.frontend
+*.log

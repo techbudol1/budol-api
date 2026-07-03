@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"budol/server/internal/gmrengine"
-	"budol/server/internal/store"
+	"github.com/techbudol1/budol-api/internal/gmrengine"
+	"github.com/techbudol1/budol-api/internal/store"
 )
 
 const privateClaimFieldModulusText = "21888242871839275222246405745257275088548364400416034343698204186575808495617"

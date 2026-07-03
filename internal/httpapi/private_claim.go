@@ -15,8 +15,8 @@ import (
 	"strings"
 	"time"
 
-	"budol/server/internal/gmrengine"
-	"budol/server/internal/store"
+	"github.com/techbudol1/budol-api/internal/gmrengine"
+	"github.com/techbudol1/budol-api/internal/store"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -565,9 +565,8 @@ func runPrivateClaimScript(ctx context.Context, payload map[string]any) (private
 
 func privateClaimScriptPath() (string, error) {
 	candidates := []string{
-		filepath.Join("gmr-engine", "scripts", "private-claim-note.ts"),
-		filepath.Join("..", "gmr-engine", "scripts", "private-claim-note.ts"),
-		filepath.Join("..", "..", "gmr-engine", "scripts", "private-claim-note.ts"),
+		filepath.Join("scripts", "private-claim-note.ts"),
+		filepath.Join("..", "scripts", "private-claim-note.ts"),
 	}
 	for _, candidate := range candidates {
 		if _, err := os.Stat(candidate); err == nil {

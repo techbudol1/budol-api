@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"budol/server/internal/config"
-	"budol/server/internal/store"
+	"github.com/techbudol1/budol-api/internal/config"
+	"github.com/techbudol1/budol-api/internal/store"
 
 	"github.com/cloudwego/eino/compose"
 )

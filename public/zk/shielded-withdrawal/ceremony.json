@@ -1,0 +1,6 @@
+{
+  "circuit": "shielded_withdrawal",
+  "ceremony": "development-local",
+  "finalZKeyHash": "3c79c5d667e9d42bdbe641aa91536f8195e8712bbdbc6bd1754b874c1587e834",
+  "productionReady": false
+}

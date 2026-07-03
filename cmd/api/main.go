@@ -8,13 +8,13 @@ import (
 	"syscall"
 	"time"
 
-	"budol/server/internal/config"
-	"budol/server/internal/gmrengine"
-	"budol/server/internal/httpapi"
-	"budol/server/internal/newsagent"
-	"budol/server/internal/session"
-	"budol/server/internal/store"
-	"budol/server/internal/thirdweb"
+	"github.com/techbudol1/budol-api/internal/config"
+	"github.com/techbudol1/budol-api/internal/gmrengine"
+	"github.com/techbudol1/budol-api/internal/httpapi"
+	"github.com/techbudol1/budol-api/internal/newsagent"
+	"github.com/techbudol1/budol-api/internal/session"
+	"github.com/techbudol1/budol-api/internal/store"
+	"github.com/techbudol1/budol-api/internal/thirdweb"
 )
 
 func main() {

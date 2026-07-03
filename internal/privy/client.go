@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"budol/server/internal/store"
+	"github.com/techbudol1/budol-api/internal/store"
 
 	"github.com/golang-jwt/jwt/v5"
 )

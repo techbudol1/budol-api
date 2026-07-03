@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"budol/server/internal/gmrengine"
-	"budol/server/internal/store"
-	"budol/server/internal/thirdweb"
+	"github.com/techbudol1/budol-api/internal/gmrengine"
+	"github.com/techbudol1/budol-api/internal/store"
+	"github.com/techbudol1/budol-api/internal/thirdweb"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gofiber/fiber/v2"
