@@ -240,8 +240,6 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 	})
 	api.Get("/auth/social/:provider", server.startSocialAuth)
 	api.Get("/auth/social/callback", server.socialAuthCallback)
-	api.Get("/auth/facebook/start", authRateLimit, server.startFacebookOAuth)
-	api.Get("/auth/facebook/callback", authRateLimit, server.facebookOAuthCallback)
 	api.Get("/auth/google/start", authRateLimit, server.startGoogleOAuth)
 	api.Get("/auth/google/callback", authRateLimit, server.googleOAuthCallback)
 	api.Post("/auth/thirdweb", authRateLimit, server.loginWithThirdweb)
@@ -595,8 +593,6 @@ func managedOAuthProvider(authType string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(authType)) {
 	case "google_oauth":
 		return "google", true
-	case "facebook_oauth":
-		return "facebook", true
 	case "x_oauth":
 		return "x", true
 	default:
@@ -2786,7 +2782,7 @@ func (s Server) callbackURL() string {
 
 func validSocialProvider(provider string) bool {
 	switch provider {
-	case "google", "facebook":
+	case "google":
 		return true
 	default:
 		return false

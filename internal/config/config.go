@@ -37,9 +37,6 @@ type Config struct {
 	ThirdwebSendURL                    string
 	GMREngineAPIBase                   string
 	GMREngineAPIKey                    string
-	FacebookOAuthClientID              string
-	FacebookOAuthClientSecret          string
-	FacebookOAuthRedirectURL           string
 	GoogleOAuthClientID                string
 	GoogleOAuthClientSecret            string
 	GoogleOAuthRedirectURL             string
@@ -120,9 +117,6 @@ func Load() (Config, error) {
 		ThirdwebSendURL:                    env("THIRDWEB_SEND_URL", "https://api.thirdweb.com/v1/wallets/send"),
 		GMREngineAPIBase:                   env("GMR_ENGINE_API_BASE", "http://localhost:8090"),
 		GMREngineAPIKey:                    os.Getenv("GMR_ENGINE_API_KEY"),
-		FacebookOAuthClientID:              os.Getenv("FACEBOOK_OAUTH_CLIENT_ID"),
-		FacebookOAuthClientSecret:          os.Getenv("FACEBOOK_OAUTH_CLIENT_SECRET"),
-		FacebookOAuthRedirectURL:           env("FACEBOOK_OAUTH_REDIRECT_URL", env("PUBLIC_API_URL", "http://localhost:8080")+"/api/auth/facebook/callback"),
 		GoogleOAuthClientID:                os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
 		GoogleOAuthClientSecret:            os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
 		GoogleOAuthRedirectURL:             env("GOOGLE_OAUTH_REDIRECT_URL", env("PUBLIC_API_URL", "http://localhost:8080")+"/api/auth/google/callback"),

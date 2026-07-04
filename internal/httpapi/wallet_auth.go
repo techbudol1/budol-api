@@ -20,8 +20,7 @@ import (
 )
 
 const (
-	facebookOAuthStateCookie = "budol_facebook_oauth_state"
-	googleOAuthStateCookie   = "budol_google_oauth_state"
+	googleOAuthStateCookie = "budol_google_oauth_state"
 )
 
 type walletNonceRequest struct {
@@ -140,82 +139,6 @@ func (s Server) startGoogleOAuth(c *fiber.Ctx) error {
 	return c.Redirect("https://accounts.google.com/o/oauth2/v2/auth?"+query.Encode(), fiber.StatusFound)
 }
 
-func (s Server) startFacebookOAuth(c *fiber.Ctx) error {
-	if strings.TrimSpace(s.cfg.FacebookOAuthClientID) == "" || strings.TrimSpace(s.cfg.FacebookOAuthClientSecret) == "" {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "Facebook OAuth is not configured")
-	}
-	state, err := randomURLToken(32)
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to create OAuth state")
-	}
-	c.Cookie(&fiber.Cookie{
-		Name:     facebookOAuthStateCookie,
-		Value:    state,
-		Expires:  time.Now().UTC().Add(10 * time.Minute),
-		HTTPOnly: true,
-		SameSite: fiber.CookieSameSiteLaxMode,
-		Secure:   s.cfg.IsProduction(),
-		Path:     "/",
-	})
-	query := url.Values{}
-	query.Set("client_id", s.cfg.FacebookOAuthClientID)
-	query.Set("redirect_uri", s.cfg.FacebookOAuthRedirectURL)
-	query.Set("response_type", "code")
-	query.Set("scope", "public_profile")
-	query.Set("state", state)
-	return c.Redirect("https://www.facebook.com/v20.0/dialog/oauth?"+query.Encode(), fiber.StatusFound)
-}
-
-func (s Server) facebookOAuthCallback(c *fiber.Ctx) error {
-	if strings.TrimSpace(s.cfg.FacebookOAuthClientID) == "" || strings.TrimSpace(s.cfg.FacebookOAuthClientSecret) == "" {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "Facebook OAuth is not configured")
-	}
-	if strings.TrimSpace(c.Query("state")) == "" || c.Query("state") != c.Cookies(facebookOAuthStateCookie) {
-		return fiber.NewError(fiber.StatusUnauthorized, "invalid Facebook OAuth state")
-	}
-	c.Cookie(&fiber.Cookie{Name: facebookOAuthStateCookie, Value: "", Expires: time.Now().UTC().Add(-time.Hour), HTTPOnly: true, SameSite: fiber.CookieSameSiteLaxMode, Secure: s.cfg.IsProduction(), Path: "/"})
-	code := strings.TrimSpace(c.Query("code"))
-	if code == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "missing Facebook OAuth code")
-	}
-	profile, metadata, err := s.facebookOAuthProfile(c, code)
-	if err != nil {
-		return fiber.NewError(fiber.StatusUnauthorized, err.Error())
-	}
-	identifier := firstNonEmpty(profile.Email, profile.Name, profile.ID)
-	if s.gmrEngine == nil || !s.gmrEngine.Configured() {
-		return fiber.NewError(fiber.StatusServiceUnavailable, "GMR Engine is required to create a managed BudolPH wallet")
-	}
-	managedWallet, err := s.gmrEngine.CreateManagedUserWallet(c.Context(), gmrengine.UserWalletRequest{
-		AuthProvider: "facebook",
-		Email:        identifier,
-		Metadata:     metadata,
-		UserID:       profile.ID,
-	})
-	if err != nil {
-		return fiber.NewError(fiber.StatusBadGateway, err.Error())
-	}
-	user, err := s.store.UpsertSocialManaged(c.Context(), store.SocialManagedIdentity{
-		AuthProvider:   "facebook",
-		AuthType:       "facebook_oauth",
-		Email:          identifier,
-		Metadata:       metadata,
-		ProviderUserID: profile.ID,
-		WalletAddress:  managedWallet.Address,
-	})
-	if err != nil {
-		return fiber.NewError(fiber.StatusInternalServerError, "failed to save Facebook user")
-	}
-	s.grantWelcomeTokens(c, user)
-	if s.shouldCreateLoginNotification(c, user.ID) {
-		_, _ = s.store.CreateNotification(c.Context(), user.ID, "login", "Facebook login successful", "Your managed BudolPH wallet is ready.", "/account")
-	}
-	if err := s.issueUserSession(c, user); err != nil {
-		return err
-	}
-	return c.Redirect(s.oauthSuccessRedirect("facebook"), fiber.StatusFound)
-}
-
 func (s Server) googleOAuthCallback(c *fiber.Ctx) error {
 	if strings.TrimSpace(s.cfg.GoogleOAuthClientID) == "" || strings.TrimSpace(s.cfg.GoogleOAuthClientSecret) == "" {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "Google OAuth is not configured")
@@ -327,70 +250,6 @@ func (s Server) registerManagedEngineUserWallet(c *fiber.Ctx, user store.User, m
 type googleOAuthUserProfile struct {
 	Email   string `json:"email"`
 	Subject string `json:"sub"`
-}
-
-type facebookOAuthUserProfile struct {
-	Email string `json:"email"`
-	ID    string `json:"id"`
-	Name  string `json:"name"`
-}
-
-func (s Server) facebookOAuthProfile(c *fiber.Ctx, code string) (facebookOAuthUserProfile, string, error) {
-	query := url.Values{}
-	query.Set("client_id", s.cfg.FacebookOAuthClientID)
-	query.Set("client_secret", s.cfg.FacebookOAuthClientSecret)
-	query.Set("code", code)
-	query.Set("redirect_uri", s.cfg.FacebookOAuthRedirectURL)
-	tokenURL := "https://graph.facebook.com/v20.0/oauth/access_token?" + query.Encode()
-	request, err := http.NewRequestWithContext(c.Context(), http.MethodGet, tokenURL, nil)
-	if err != nil {
-		return facebookOAuthUserProfile{}, "", err
-	}
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return facebookOAuthUserProfile{}, "", err
-	}
-	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
-	if err != nil {
-		return facebookOAuthUserProfile{}, "", err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return facebookOAuthUserProfile{}, "", fmt.Errorf("Facebook OAuth token exchange failed")
-	}
-	var tokenPayload struct {
-		AccessToken string `json:"access_token"`
-	}
-	if err := json.Unmarshal(body, &tokenPayload); err != nil {
-		return facebookOAuthUserProfile{}, "", err
-	}
-	if strings.TrimSpace(tokenPayload.AccessToken) == "" {
-		return facebookOAuthUserProfile{}, "", fmt.Errorf("Facebook OAuth did not return an access token")
-	}
-	userQuery := url.Values{}
-	userQuery.Set("fields", "id,name,email")
-	userQuery.Set("access_token", tokenPayload.AccessToken)
-	userRequest, err := http.NewRequestWithContext(c.Context(), http.MethodGet, "https://graph.facebook.com/v20.0/me?"+userQuery.Encode(), nil)
-	if err != nil {
-		return facebookOAuthUserProfile{}, "", err
-	}
-	userResponse, err := http.DefaultClient.Do(userRequest)
-	if err != nil {
-		return facebookOAuthUserProfile{}, "", err
-	}
-	defer userResponse.Body.Close()
-	userBody, err := io.ReadAll(io.LimitReader(userResponse.Body, 1<<20))
-	if err != nil {
-		return facebookOAuthUserProfile{}, "", err
-	}
-	if userResponse.StatusCode < 200 || userResponse.StatusCode >= 300 {
-		return facebookOAuthUserProfile{}, "", fmt.Errorf("Facebook user lookup failed")
-	}
-	var profile facebookOAuthUserProfile
-	if err := json.Unmarshal(userBody, &profile); err != nil {
-		return facebookOAuthUserProfile{}, "", err
-	}
-	return profile, string(bytes.TrimSpace(userBody)), nil
 }
 
 func (s Server) googleOAuthProfile(c *fiber.Ctx, code string) (googleOAuthUserProfile, string, error) {
