@@ -43,7 +43,7 @@ func (s Server) adminRunNewsAgent(c *fiber.Ctx) error {
 	}
 	result, err := s.newsAgent.ScanWithFilter(c.Context(), request.Filter)
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadGateway, err.Error())
+		return fiber.NewError(fiber.StatusServiceUnavailable, err.Error())
 	}
 	_, _ = s.store.CreateAdminActivity(c.Context(), store.AdminActivityInput{
 		Actor:      s.adminActor(c),
