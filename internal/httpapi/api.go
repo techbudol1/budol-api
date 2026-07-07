@@ -198,8 +198,11 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 	}
 
 	app := fiber.New(fiber.Config{
-		AppName:      "BudolPH API",
-		ErrorHandler: errorHandler,
+		AppName: "BudolPH API",
+		ErrorHandler: func(c *fiber.Ctx, err error) error {
+			applyAllowedOriginHeaders(c, cfg.AllowedOrigins)
+			return errorHandler(c, err)
+		},
 	})
 
 	app.Use(recover.New())
@@ -2826,6 +2829,22 @@ func errorHandler(c *fiber.Ctx, err error) error {
 	return c.Status(code).JSON(fiber.Map{
 		"error": message,
 	})
+}
+
+func applyAllowedOriginHeaders(c *fiber.Ctx, allowedOrigins []string) {
+	origin := strings.TrimSpace(c.Get("Origin"))
+	if origin == "" {
+		return
+	}
+	for _, allowed := range allowedOrigins {
+		allowed = strings.TrimSpace(allowed)
+		if allowed == "*" || allowed == origin {
+			c.Set(fiber.HeaderAccessControlAllowOrigin, origin)
+			c.Set(fiber.HeaderAccessControlAllowCredentials, "true")
+			c.Vary(fiber.HeaderOrigin)
+			return
+		}
+	}
 }
 
 func (s Server) requireAdminSession(c *fiber.Ctx) error {
