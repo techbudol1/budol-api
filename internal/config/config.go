@@ -19,6 +19,7 @@ type Config struct {
 	AdminUsername                      string
 	AllowedOrigins                     []string
 	ArbitrumSepoliaRPCURL              string
+	WelcomeTokenRPCURL                 string
 	CollateralBufferBps                int
 	CollateralGuaranteeEnabled         bool
 	PublicAppURL                       string
@@ -99,6 +100,7 @@ func Load() (Config, error) {
 		AdminUsername:                      env("ADMIN_USERNAME", "destrega"),
 		AllowedOrigins:                     splitCSV(env("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")),
 		ArbitrumSepoliaRPCURL:              env("ARBITRUM_SEPOLIA_RPC_URL", "https://sepolia-rollup.arbitrum.io/rpc"),
+		WelcomeTokenRPCURL:                 env("WELCOME_TOKEN_RPC_URL", env("ARBITRUM_SEPOLIA_RPC_URL", "https://sepolia-rollup.arbitrum.io/rpc")),
 		CollateralBufferBps:                envNonNegativeInt("COLLATERAL_BUFFER_BPS", 0),
 		CollateralGuaranteeEnabled:         envBool("COLLATERAL_GUARANTEE_ENABLED", true),
 		PrivyAPIBase:                       env("PRIVY_API_BASE", "https://api.privy.io"),

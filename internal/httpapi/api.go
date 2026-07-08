@@ -188,7 +188,7 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 		cfg:           cfg,
 		collateralMu:  &sync.Mutex{},
 		engineLimiter: newEngineRateLimiter(),
-		evm:           evm.NewClient(cfg.ArbitrumSepoliaRPCURL),
+		evm:           evm.NewClient(cfg.WelcomeTokenRPCURL),
 		gmrEngine:     gmrEngineClient,
 		newsAgent:     newsAgent,
 		privy:         privy.NewClient(cfg.PrivyAPIBase, cfg.PrivyAppID, cfg.PrivyAppSecret, cfg.PrivyVerificationKey),
@@ -2521,6 +2521,10 @@ func settlementAmountString(amount float64) string {
 
 func networkName(chainID int) string {
 	switch chainID {
+	case 2651420:
+		return "Horizen Testnet"
+	case 26514:
+		return "Horizen"
 	case 421614:
 		return "Arbitrum Sepolia"
 	case 42161:
