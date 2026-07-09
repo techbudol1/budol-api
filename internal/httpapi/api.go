@@ -1221,13 +1221,16 @@ func (s Server) tradeConfig(c *fiber.Ctx) error {
 			NetworkName:                networkName(s.cfg.WelcomeTokenChainID),
 			TokenAddress:               strings.ToLower(tokenContract),
 			TokenDecimals:              s.cfg.WelcomeTokenDecimals,
-			TokenSymbol:                "BUDOL",
+			TokenSymbol:                s.cfg.WelcomeTokenSymbol,
 			EscrowWalletAddress:        projectWallet,
 		},
 	})
 }
 
 func (s Server) engineGasFreeConfig(ctx context.Context) (bool, string) {
+	if s.cfg.WelcomeTokenChainID != 421614 {
+		return false, ""
+	}
 	if s.gmrEngine == nil || !s.gmrEngine.Configured() {
 		return false, ""
 	}

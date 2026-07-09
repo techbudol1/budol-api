@@ -67,6 +67,7 @@ type Config struct {
 	WelcomeTokenContract               string
 	WelcomeTokenAmount                 string
 	WelcomeTokenDecimals               int
+	WelcomeTokenSymbol                 string
 	MemgraphURI                        string
 	MemgraphUser                       string
 	MemgraphPassword                   string
@@ -100,9 +101,9 @@ func Load() (Config, error) {
 		AdminUsername:                      env("ADMIN_USERNAME", "destrega"),
 		AllowedOrigins:                     splitCSV(env("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")),
 		ArbitrumSepoliaRPCURL:              env("ARBITRUM_SEPOLIA_RPC_URL", "https://sepolia-rollup.arbitrum.io/rpc"),
-		WelcomeTokenRPCURL:                 env("WELCOME_TOKEN_RPC_URL", env("ARBITRUM_SEPOLIA_RPC_URL", "https://sepolia-rollup.arbitrum.io/rpc")),
+		WelcomeTokenRPCURL:                 env("WELCOME_TOKEN_RPC_URL", "https://horizen-testnet.rpc.caldera.xyz/http"),
 		CollateralBufferBps:                envNonNegativeInt("COLLATERAL_BUFFER_BPS", 0),
-		CollateralGuaranteeEnabled:         envBool("COLLATERAL_GUARANTEE_ENABLED", true),
+		CollateralGuaranteeEnabled:         envBool("COLLATERAL_GUARANTEE_ENABLED", false),
 		PrivyAPIBase:                       env("PRIVY_API_BASE", "https://api.privy.io"),
 		PrivyAppID:                         os.Getenv("PRIVY_APP_ID"),
 		PrivyAppSecret:                     os.Getenv("PRIVY_APP_SECRET"),
@@ -143,10 +144,11 @@ func Load() (Config, error) {
 		ShieldedWithdrawalRelayerFee:       env("SHIELDED_WITHDRAWAL_RELAYER_FEE", "0"),
 		ShieldedWithdrawalStaleProcessing:  time.Duration(envInt("SHIELDED_WITHDRAWAL_STALE_PROCESSING_SECONDS", 600)) * time.Second,
 		ShieldedWithdrawalMode:             strings.ToLower(env("SHIELDED_WITHDRAWAL_MODE", "zkverify")),
-		WelcomeTokenChainID:                envInt("WELCOME_TOKEN_CHAIN_ID", 421614),
-		WelcomeTokenContract:               env("WELCOME_TOKEN_CONTRACT", "0x689513fb392e460c6d9225f911fce57fe50d6db4"),
-		WelcomeTokenAmount:                 env("WELCOME_TOKEN_AMOUNT", "100"),
+		WelcomeTokenChainID:                envInt("WELCOME_TOKEN_CHAIN_ID", 2651420),
+		WelcomeTokenContract:               env("WELCOME_TOKEN_CONTRACT", "0xb06EC4ce262D8dbDc24Fac87479A49A7DC4cFb87"),
+		WelcomeTokenAmount:                 env("WELCOME_TOKEN_AMOUNT", ""),
 		WelcomeTokenDecimals:               envInt("WELCOME_TOKEN_DECIMALS", 18),
+		WelcomeTokenSymbol:                 env("WELCOME_TOKEN_SYMBOL", "tZEN"),
 		MemgraphURI:                        env("MEMGRAPH_URI", "bolt://localhost:7687"),
 		MemgraphUser:                       os.Getenv("MEMGRAPH_USER"),
 		MemgraphPassword:                   os.Getenv("MEMGRAPH_PASSWORD"),
@@ -193,8 +195,8 @@ func Load() (Config, error) {
 		}
 	}
 	if cfg.IsProduction() {
-		if !cfg.CollateralGuaranteeEnabled {
-			return Config{}, errors.New("COLLATERAL_GUARANTEE_ENABLED must be true in production")
+		if cfg.WelcomeTokenChainID == 421614 && !cfg.CollateralGuaranteeEnabled {
+			return Config{}, errors.New("COLLATERAL_GUARANTEE_ENABLED must be true in production on Arbitrum Sepolia")
 		}
 		if len(cfg.AllowedOrigins) == 0 {
 			return Config{}, errors.New("ALLOWED_ORIGINS is required in production")
