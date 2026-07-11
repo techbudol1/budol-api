@@ -122,6 +122,19 @@ type TradeConfig struct {
 	EscrowWalletAddress        string           `json:"escrowWalletAddress"`
 }
 
+type SmartWalletConfig struct {
+	Enabled           bool   `json:"enabled"`
+	ChainID           int    `json:"chainId"`
+	NetworkName       string `json:"networkName"`
+	RPCURL            string `json:"rpcUrl"`
+	EntryPointAddress string `json:"entryPointAddress"`
+	EntryPointVersion string `json:"entryPointVersion"`
+	FactoryAddress    string `json:"factoryAddress"`
+	BundlerURL        string `json:"bundlerUrl"`
+	AccountType       string `json:"accountType"`
+	Mode              string `json:"mode"`
+}
+
 type CashoutRequest struct {
 	PollID string  `json:"pollId"`
 	Side   string  `json:"side"`
@@ -265,6 +278,7 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 	api.Get("/polls/:slug", server.publicPollDetail)
 	api.Get("/portfolio", server.portfolio)
 	api.Get("/trade-config", server.tradeConfig)
+	api.Get("/smart-wallet/config", server.smartWalletConfig)
 	api.Get("/collateral-status", server.publicCollateralStatus)
 	api.Get("/trade-quote", server.tradeQuote)
 	api.Post("/trades/gasless-escrow", tradeRateLimit, server.createGaslessTradeEscrow)
@@ -1182,6 +1196,28 @@ func (s Server) publicCollateralStatus(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadGateway, "failed to load payout collateral")
 	}
 	return c.JSON(fiber.Map{"collateral": status})
+}
+
+func (s Server) smartWalletConfig(c *fiber.Ctx) error {
+	configured := s.cfg.SmartWalletEnabled &&
+		thirdweb.IsEVMAddress(s.cfg.SmartWalletEntryPointAddress) &&
+		thirdweb.IsEVMAddress(s.cfg.SmartWalletFactoryAddress) &&
+		strings.TrimSpace(s.cfg.SmartWalletBundlerURL) != ""
+
+	return c.JSON(fiber.Map{
+		"config": SmartWalletConfig{
+			Enabled:           configured,
+			ChainID:           s.cfg.SmartWalletChainID,
+			NetworkName:       networkName(s.cfg.SmartWalletChainID),
+			RPCURL:            s.cfg.SmartWalletRPCURL,
+			EntryPointAddress: strings.ToLower(s.cfg.SmartWalletEntryPointAddress),
+			EntryPointVersion: s.cfg.SmartWalletEntryPointVersion,
+			FactoryAddress:    strings.ToLower(s.cfg.SmartWalletFactoryAddress),
+			BundlerURL:        s.cfg.SmartWalletBundlerURL,
+			AccountType:       "SimpleAccount",
+			Mode:              "erc4337",
+		},
+	})
 }
 
 func (s Server) tradeConfig(c *fiber.Ctx) error {

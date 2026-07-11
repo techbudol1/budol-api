@@ -68,6 +68,13 @@ type Config struct {
 	WelcomeTokenAmount                 string
 	WelcomeTokenDecimals               int
 	WelcomeTokenSymbol                 string
+	SmartWalletEnabled                 bool
+	SmartWalletChainID                 int
+	SmartWalletRPCURL                  string
+	SmartWalletEntryPointAddress       string
+	SmartWalletEntryPointVersion       string
+	SmartWalletFactoryAddress          string
+	SmartWalletBundlerURL              string
 	MemgraphURI                        string
 	MemgraphUser                       string
 	MemgraphPassword                   string
@@ -149,6 +156,13 @@ func Load() (Config, error) {
 		WelcomeTokenAmount:                 env("WELCOME_TOKEN_AMOUNT", ""),
 		WelcomeTokenDecimals:               envInt("WELCOME_TOKEN_DECIMALS", 18),
 		WelcomeTokenSymbol:                 env("WELCOME_TOKEN_SYMBOL", "BUDOL"),
+		SmartWalletEnabled:                 envBool("HORIZEN_AA_ENABLED", false),
+		SmartWalletChainID:                 envInt("HORIZEN_AA_CHAIN_ID", envInt("WELCOME_TOKEN_CHAIN_ID", 2651420)),
+		SmartWalletRPCURL:                  env("HORIZEN_AA_RPC_URL", env("WELCOME_TOKEN_RPC_URL", "https://horizen-testnet.rpc.caldera.xyz/http")),
+		SmartWalletEntryPointAddress:       os.Getenv("HORIZEN_AA_ENTRYPOINT_ADDRESS"),
+		SmartWalletEntryPointVersion:       env("HORIZEN_AA_ENTRYPOINT_VERSION", "0.8"),
+		SmartWalletFactoryAddress:          os.Getenv("HORIZEN_AA_FACTORY_ADDRESS"),
+		SmartWalletBundlerURL:              os.Getenv("HORIZEN_AA_BUNDLER_URL"),
 		MemgraphURI:                        env("MEMGRAPH_URI", "bolt://localhost:7687"),
 		MemgraphUser:                       os.Getenv("MEMGRAPH_USER"),
 		MemgraphPassword:                   os.Getenv("MEMGRAPH_PASSWORD"),
@@ -192,6 +206,26 @@ func Load() (Config, error) {
 	if cfg.ShieldedPayoutEnabled {
 		if err := validateShieldedPayoutConfig(cfg); err != nil {
 			return Config{}, err
+		}
+	}
+	if cfg.SmartWalletEnabled {
+		if cfg.SmartWalletChainID != cfg.WelcomeTokenChainID {
+			return Config{}, errors.New("HORIZEN_AA_CHAIN_ID must match WELCOME_TOKEN_CHAIN_ID")
+		}
+		if strings.TrimSpace(cfg.SmartWalletRPCURL) == "" {
+			return Config{}, errors.New("HORIZEN_AA_RPC_URL is required when HORIZEN_AA_ENABLED=true")
+		}
+		if !isEVMAddress(cfg.SmartWalletEntryPointAddress) {
+			return Config{}, errors.New("HORIZEN_AA_ENTRYPOINT_ADDRESS must be a valid EVM address when HORIZEN_AA_ENABLED=true")
+		}
+		if !isEVMAddress(cfg.SmartWalletFactoryAddress) {
+			return Config{}, errors.New("HORIZEN_AA_FACTORY_ADDRESS must be a valid EVM address when HORIZEN_AA_ENABLED=true")
+		}
+		if strings.TrimSpace(cfg.SmartWalletBundlerURL) == "" {
+			return Config{}, errors.New("HORIZEN_AA_BUNDLER_URL is required when HORIZEN_AA_ENABLED=true")
+		}
+		if strings.TrimSpace(cfg.SmartWalletEntryPointVersion) == "" {
+			return Config{}, errors.New("HORIZEN_AA_ENTRYPOINT_VERSION is required when HORIZEN_AA_ENABLED=true")
 		}
 	}
 	if cfg.IsProduction() {
