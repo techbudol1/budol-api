@@ -48,6 +48,9 @@ type TokenTransfer struct {
 	Counterparty    string `json:"counterparty"`
 	AmountRaw       string `json:"amountRaw"`
 	Amount          string `json:"amount"`
+	TokenAddress    string `json:"tokenAddress"`
+	TokenSymbol     string `json:"tokenSymbol"`
+	TokenLabel      string `json:"tokenLabel"`
 	TransactionHash string `json:"transactionHash"`
 	BlockNumber     uint64 `json:"blockNumber"`
 	LogIndex        uint64 `json:"logIndex"`

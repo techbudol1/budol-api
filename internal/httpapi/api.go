@@ -7,6 +7,7 @@ import (
 	"errors"
 	"math/big"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1516,36 +1517,99 @@ func (s Server) walletBalance(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	balances := []fiber.Map{}
+
+	if nativeBalance, err := s.evm.NativeBalance(c.Context(), user.WalletAddress); err == nil {
+		balances = append(balances, fiber.Map{
+			"raw":           nativeBalance.Raw,
+			"formatted":     nativeBalance.Formatted,
+			"decimals":      nativeBalance.Decimals,
+			"kind":          "native",
+			"label":         "Gas token",
+			"symbol":        "ETH",
+			"walletAddress": nativeBalance.WalletAddress,
+			"fetchedAt":     nativeBalance.FetchedAt,
+		})
+	} else {
+		balances = append(balances, zeroWalletBalance("native", "Gas token", "ETH", user.WalletAddress, "", 18, now))
+	}
+
+	privacyToken := strings.ToLower(strings.TrimSpace("0xb06EC4ce262D8dbDc24Fac87479A49A7DC4cFb87"))
+	if thirdweb.IsEVMAddress(privacyToken) {
+		if balance, err := s.evm.ERC20Balance(c.Context(), privacyToken, user.WalletAddress, 18); err == nil {
+			balances = append(balances, walletTokenBalanceMap(balance, "Privacy token", "tZEN"))
+		} else {
+			balances = append(balances, zeroWalletBalance("erc20", "Privacy token", "tZEN", user.WalletAddress, privacyToken, 18, now))
+		}
+	}
+
 	tokenContract := s.activeTokenContract(c.Context())
 	balance, err := s.evm.ERC20Balance(c.Context(), tokenContract, user.WalletAddress, s.cfg.WelcomeTokenDecimals)
 	if err != nil && s.gmrEngine != nil && s.gmrEngine.Configured() {
 		engineBalance, engineErr := s.gmrEngine.ERC20Balance(c.Context(), s.cfg.WelcomeTokenChainID, tokenContract, user.WalletAddress)
 		if engineErr == nil {
+			budolBalance := fiber.Map{
+				"raw":           engineBalance.OwnedBalanceRaw,
+				"formatted":     engineBalance.OwnedBalance,
+				"decimals":      engineBalance.Decimals,
+				"kind":          "erc20",
+				"label":         "Trading token",
+				"symbol":        "BUDOL",
+				"walletAddress": engineBalance.WalletAddress,
+				"tokenAddress":  engineBalance.ContractAddress,
+				"fetchedAt":     now,
+			}
+			balances = append(balances, budolBalance)
 			return c.JSON(fiber.Map{
-				"balance": fiber.Map{
-					"raw":           engineBalance.OwnedBalanceRaw,
-					"formatted":     engineBalance.OwnedBalance,
-					"decimals":      engineBalance.Decimals,
-					"walletAddress": engineBalance.WalletAddress,
-					"tokenAddress":  engineBalance.ContractAddress,
-					"fetchedAt":     time.Now().UTC().Format(time.RFC3339),
-				},
+				"balance":  budolBalance,
+				"balances": balances,
 			})
 		}
 	}
 	if err != nil {
-		return fiber.NewError(fiber.StatusBadGateway, "failed to load wallet balance")
+		budolBalance := zeroWalletBalance("erc20", "Trading token", "BUDOL", user.WalletAddress, tokenContract, s.cfg.WelcomeTokenDecimals, now)
+		balances = append(balances, budolBalance)
+		return c.JSON(fiber.Map{
+			"balance":  budolBalance,
+			"balances": balances,
+			"warning":  "BUDOL balance is temporarily unavailable",
+		})
 	}
+	budolBalance := walletTokenBalanceMap(balance, "Trading token", "BUDOL")
+	balances = append(balances, budolBalance)
 	return c.JSON(fiber.Map{
-		"balance": fiber.Map{
-			"raw":           balance.Raw,
-			"formatted":     balance.Formatted,
-			"decimals":      balance.Decimals,
-			"walletAddress": balance.WalletAddress,
-			"tokenAddress":  balance.TokenAddress,
-			"fetchedAt":     balance.FetchedAt,
-		},
+		"balance":  budolBalance,
+		"balances": balances,
 	})
+}
+
+func walletTokenBalanceMap(balance evm.TokenBalance, label string, symbol string) fiber.Map {
+	return fiber.Map{
+		"raw":           balance.Raw,
+		"formatted":     balance.Formatted,
+		"decimals":      balance.Decimals,
+		"kind":          "erc20",
+		"label":         label,
+		"symbol":        strings.TrimSpace(symbol),
+		"walletAddress": balance.WalletAddress,
+		"tokenAddress":  balance.TokenAddress,
+		"fetchedAt":     balance.FetchedAt,
+	}
+}
+
+func zeroWalletBalance(kind string, label string, symbol string, walletAddress string, tokenAddress string, decimals int, fetchedAt string) fiber.Map {
+	return fiber.Map{
+		"raw":           "0",
+		"formatted":     "0",
+		"decimals":      decimals,
+		"kind":          strings.TrimSpace(kind),
+		"label":         strings.TrimSpace(label),
+		"symbol":        strings.TrimSpace(symbol),
+		"walletAddress": strings.ToLower(strings.TrimSpace(walletAddress)),
+		"tokenAddress":  strings.ToLower(strings.TrimSpace(tokenAddress)),
+		"fetchedAt":     fetchedAt,
+	}
 }
 
 func (s Server) walletHistory(c *fiber.Ctx) error {
@@ -1553,17 +1617,66 @@ func (s Server) walletHistory(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	transfers, err := s.evm.ERC20TransferHistory(c.Context(), s.activeTokenContract(c.Context()), user.WalletAddress, s.cfg.WelcomeTokenDecimals)
-	if err != nil {
-		return c.JSON(fiber.Map{
-			"transfers": []evm.TokenTransfer{},
-			"warning":   "wallet history is temporarily unavailable",
-		})
+	tokenRequests := []struct {
+		address  string
+		decimals int
+		label    string
+		symbol   string
+	}{
+		{
+			address:  strings.ToLower(strings.TrimSpace("0xb06EC4ce262D8dbDc24Fac87479A49A7DC4cFb87")),
+			decimals: 18,
+			label:    "Privacy token",
+			symbol:   "tZEN",
+		},
+		{
+			address:  strings.ToLower(strings.TrimSpace(s.activeTokenContract(c.Context()))),
+			decimals: s.cfg.WelcomeTokenDecimals,
+			label:    "Trading token",
+			symbol:   "BUDOL",
+		},
+	}
+
+	transfers := []evm.TokenTransfer{}
+	warnings := []string{}
+	seenTokens := map[string]struct{}{}
+	for _, token := range tokenRequests {
+		if !thirdweb.IsEVMAddress(token.address) {
+			continue
+		}
+		if _, seen := seenTokens[token.address]; seen {
+			continue
+		}
+		seenTokens[token.address] = struct{}{}
+		tokenTransfers, err := s.evm.ERC20TransferHistory(c.Context(), token.address, user.WalletAddress, token.decimals)
+		if err != nil {
+			warnings = append(warnings, token.symbol+" transfer history is temporarily unavailable")
+			continue
+		}
+		for _, transfer := range tokenTransfers {
+			transfer.TokenAddress = token.address
+			transfer.TokenSymbol = token.symbol
+			transfer.TokenLabel = token.label
+			transfers = append(transfers, transfer)
+		}
+	}
+	sort.Slice(transfers, func(i int, j int) bool {
+		if transfers[i].BlockNumber == transfers[j].BlockNumber {
+			return transfers[i].LogIndex > transfers[j].LogIndex
+		}
+		return transfers[i].BlockNumber > transfers[j].BlockNumber
+	})
+	if len(transfers) > 100 {
+		transfers = transfers[:100]
 	}
 	_ = s.createReceivedTransferNotifications(c, user, transfers)
-	return c.JSON(fiber.Map{
+	response := fiber.Map{
 		"transfers": transfers,
-	})
+	}
+	if len(warnings) > 0 {
+		response["warning"] = strings.Join(warnings, "; ")
+	}
+	return c.JSON(response)
 }
 
 func (s Server) syncWalletTransferNotifications(c *fiber.Ctx, user store.User) error {
@@ -1595,6 +1708,7 @@ func (s Server) createReceivedTransferNotifications(c *fiber.Ctx, user store.Use
 		if transfer.Direction != "received" || strings.TrimSpace(transfer.TransactionHash) == "" {
 			continue
 		}
+		tokenSymbol := firstNonEmpty(strings.TrimSpace(transfer.TokenSymbol), "BUDOL")
 		link := walletTransferLink(transfer.TransactionHash)
 		if seen[link] {
 			continue
@@ -1602,7 +1716,7 @@ func (s Server) createReceivedTransferNotifications(c *fiber.Ctx, user store.Use
 		grant := store.TokenGrant{}
 		isWelcomeGrant := false
 		var reconcileErr error
-		if welcomeGrantSender != "" && strings.EqualFold(transfer.Counterparty, welcomeGrantSender) {
+		if strings.EqualFold(tokenSymbol, "BUDOL") && welcomeGrantSender != "" && strings.EqualFold(transfer.Counterparty, welcomeGrantSender) {
 			grant, isWelcomeGrant, reconcileErr = s.store.ReconcileWelcomeTokenGrantTransfer(
 				c.Context(),
 				user.ID,
@@ -1629,7 +1743,7 @@ func (s Server) createReceivedTransferNotifications(c *fiber.Ctx, user store.Use
 					user.ID,
 					"welcome_tokens",
 					"Welcome tokens received",
-					grant.Amount+" BUDOL welcome tokens were sent to your wallet.",
+					grant.Amount+" "+tokenSymbol+" welcome tokens were sent to your wallet.",
 					link,
 				)
 			}
@@ -1640,8 +1754,8 @@ func (s Server) createReceivedTransferNotifications(c *fiber.Ctx, user store.Use
 			c.Context(),
 			user.ID,
 			"wallet_received",
-			"BUDOL received",
-			transfer.Amount+" BUDOL arrived in your wallet from "+shortAddressForAdmin(transfer.Counterparty)+".",
+			tokenSymbol+" received",
+			transfer.Amount+" "+tokenSymbol+" arrived in your wallet from "+shortAddressForAdmin(transfer.Counterparty)+".",
 			link,
 		)
 		seen[link] = true
