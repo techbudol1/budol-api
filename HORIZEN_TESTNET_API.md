@@ -34,4 +34,6 @@ The API exposes this at:
 GET /api/smart-wallet/config
 ```
 
-The current active trade path still uses direct external wallets until the bundler is running and trade escrow is converted to UserOperations.
+When enabled, the frontend may submit escrow transfers from the user's derived SimpleAccount instead of the EOA. The API only accepts `escrowFromAddress` when it matches the SimpleAccount derived from the configured factory and the authenticated user's EOA.
+
+When disabled, the API verifies escrow transfers from the authenticated user's EOA.

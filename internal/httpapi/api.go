@@ -83,11 +83,12 @@ type TokenContractUpdateRequest struct {
 }
 
 type TradeRequest struct {
-	PollID           string  `json:"pollId"`
-	Side             string  `json:"side"`
-	Amount           float64 `json:"amount"`
-	EscrowTxHash     string  `json:"escrowTxHash"`
-	PrivateClaimLeaf string  `json:"privateClaimLeaf"`
+	PollID            string  `json:"pollId"`
+	Side              string  `json:"side"`
+	Amount            float64 `json:"amount"`
+	EscrowTxHash      string  `json:"escrowTxHash"`
+	EscrowFromAddress string  `json:"escrowFromAddress"`
+	PrivateClaimLeaf  string  `json:"privateClaimLeaf"`
 }
 
 type GaslessEscrowRequest struct {
@@ -1403,7 +1404,11 @@ func (s Server) verifyTradeEscrow(c *fiber.Ctx, user store.User, request TradeRe
 		return tradeEscrowVerification{}, fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 	tokenContract := s.activeTokenContract(c.Context())
-	ok, err := s.evm.WaitForERC20Transfer(c.Context(), tokenContract, txHash, user.WalletAddress, projectWallet, quantity)
+	escrowFrom, err := s.expectedEscrowFromAddress(c.Context(), user, request)
+	if err != nil {
+		return tradeEscrowVerification{}, err
+	}
+	ok, err := s.evm.WaitForERC20Transfer(c.Context(), tokenContract, txHash, escrowFrom, projectWallet, quantity)
 	if err != nil {
 		return tradeEscrowVerification{}, fiber.NewError(fiber.StatusBadGateway, err.Error())
 	}
@@ -1412,11 +1417,36 @@ func (s Server) verifyTradeEscrow(c *fiber.Ctx, user store.User, request TradeRe
 	}
 	return tradeEscrowVerification{
 		Status:     "verified",
-		From:       strings.ToLower(user.WalletAddress),
+		From:       strings.ToLower(escrowFrom),
 		To:         projectWallet,
 		Amount:     request.Amount,
 		VerifiedAt: time.Now().UTC().Format(time.RFC3339),
 	}, nil
+}
+
+func (s Server) expectedEscrowFromAddress(ctx context.Context, user store.User, request TradeRequest) (string, error) {
+	requestedFrom := strings.ToLower(strings.TrimSpace(request.EscrowFromAddress))
+	userWallet := strings.ToLower(strings.TrimSpace(user.WalletAddress))
+	if requestedFrom == "" || strings.EqualFold(requestedFrom, userWallet) {
+		return userWallet, nil
+	}
+	if !thirdweb.IsEVMAddress(requestedFrom) {
+		return "", fiber.NewError(fiber.StatusBadRequest, "invalid escrowFromAddress")
+	}
+	if !s.cfg.SmartWalletEnabled {
+		return "", fiber.NewError(fiber.StatusBadRequest, "smart wallet escrow is not enabled")
+	}
+	if !thirdweb.IsEVMAddress(s.cfg.SmartWalletFactoryAddress) {
+		return "", fiber.NewError(fiber.StatusServiceUnavailable, "smart account factory is not configured")
+	}
+	expected, err := s.evm.SimpleAccountAddress(ctx, s.cfg.SmartWalletFactoryAddress, userWallet, 0)
+	if err != nil {
+		return "", fiber.NewError(fiber.StatusBadGateway, "failed to derive smart account address")
+	}
+	if !strings.EqualFold(requestedFrom, expected) {
+		return "", fiber.NewError(fiber.StatusBadRequest, "escrowFromAddress does not match the configured smart wallet")
+	}
+	return strings.ToLower(expected), nil
 }
 
 func (s Server) ensureTradingBalance(c *fiber.Ctx, user store.User, amount float64) error {

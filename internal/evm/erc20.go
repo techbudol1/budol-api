@@ -16,6 +16,7 @@ import (
 )
 
 const balanceOfSelector = "70a08231"
+const simpleAccountGetAddressSelector = "8cb84e18"
 const transferTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
 var evmAddressPattern = regexp.MustCompile(`^0x[0-9a-fA-F]{40}$`)
@@ -286,6 +287,51 @@ func (c *Client) ERC20Balance(ctx context.Context, tokenAddress string, walletAd
 		TokenAddress:  tokenAddress,
 		FetchedAt:     time.Now().UTC().Format(time.RFC3339),
 	}, nil
+}
+
+func (c *Client) SimpleAccountAddress(ctx context.Context, factoryAddress string, ownerAddress string, salt uint64) (string, error) {
+	factoryAddress = strings.TrimSpace(factoryAddress)
+	ownerAddress = strings.TrimSpace(ownerAddress)
+	if c.rpcURL == "" {
+		return "", errors.New("RPC URL is not configured")
+	}
+	if !evmAddressPattern.MatchString(factoryAddress) {
+		return "", errors.New("invalid smart account factory address")
+	}
+	if !evmAddressPattern.MatchString(ownerAddress) {
+		return "", errors.New("invalid owner address")
+	}
+
+	payload := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "eth_call",
+		"params": []any{
+			map[string]string{
+				"to":   factoryAddress,
+				"data": simpleAccountGetAddressCalldata(ownerAddress, salt),
+			},
+			"latest",
+		},
+	}
+
+	var rpcResponse struct {
+		Result string `json:"result"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := c.rpc(ctx, payload, &rpcResponse); err != nil {
+		return "", err
+	}
+	if rpcResponse.Error != nil {
+		return "", fmt.Errorf("RPC smart account address read failed: %s", rpcResponse.Error.Message)
+	}
+	result := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(rpcResponse.Result)), "0x")
+	if len(result) < 64 {
+		return "", errors.New("invalid smart account address response")
+	}
+	return "0x" + result[len(result)-40:], nil
 }
 
 func (c *Client) WaitForERC20Transfer(ctx context.Context, tokenAddress string, transactionHash string, from string, to string, amountRaw string) (bool, error) {
@@ -629,6 +675,12 @@ func (c *Client) rpc(ctx context.Context, payload map[string]any, out any) error
 func balanceOfCalldata(walletAddress string) string {
 	address := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(walletAddress)), "0x")
 	return "0x" + balanceOfSelector + strings.Repeat("0", 64-len(address)) + address
+}
+
+func simpleAccountGetAddressCalldata(ownerAddress string, salt uint64) string {
+	address := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(ownerAddress)), "0x")
+	saltWord := new(big.Int).SetUint64(salt).Text(16)
+	return "0x" + simpleAccountGetAddressSelector + strings.Repeat("0", 64-len(address)) + address + strings.Repeat("0", 64-len(saltWord)) + saltWord
 }
 
 func topicAddress(walletAddress string) string {
