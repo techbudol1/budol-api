@@ -11,6 +11,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -104,9 +105,22 @@ type shieldedWithdrawalExecutionResult struct {
 }
 
 type shieldedPayoutCreditResult struct {
-	PayoutError    string
-	PayoutStatus   string
-	TransactionIDs []string
+	CreditedCommitments  []string
+	DirectFallbackAmount string
+	PayoutError          string
+	PayoutStatus         string
+	TransactionIDs       []string
+}
+
+type ShieldedNoteCommitmentInput struct {
+	Commitment   string `json:"commitment"`
+	Denomination string `json:"denomination"`
+	PoolAddress  string `json:"poolAddress"`
+}
+
+type shieldedPayoutPoolPlan struct {
+	Denomination string
+	PoolAddress  string
 }
 
 const shieldedWithdrawalQueuePausedSetting = "shielded_withdrawal_queue_paused"
@@ -544,67 +558,78 @@ func (s Server) shieldedPayoutPools() []fiber.Map {
 }
 
 func (s Server) creditShieldedPayout(ctx context.Context, payoutAmount string, noteCommitment string) (shieldedPayoutCreditResult, error) {
+	return s.creditShieldedPayoutSplit(ctx, payoutAmount, []ShieldedNoteCommitmentInput{{
+		Commitment: noteCommitment,
+	}})
+}
+
+func (s Server) creditShieldedPayoutSplit(ctx context.Context, payoutAmount string, noteCommitments []ShieldedNoteCommitmentInput) (shieldedPayoutCreditResult, error) {
 	if !s.shieldedPayoutConfigured() {
 		return shieldedPayoutCreditResult{}, errors.New("shielded payout pool is not configured")
 	}
-	noteCommitment = strings.ToLower(strings.TrimSpace(noteCommitment))
-	if !isBytes32Hex(noteCommitment) {
-		return shieldedPayoutCreditResult{}, errors.New("shieldedNoteCommitment must be a 32-byte hex string")
-	}
-	payoutQuantity, err := thirdweb.TokenQuantity(payoutAmount, s.cfg.WelcomeTokenDecimals)
+	plan, ok, err := s.shieldedPayoutPlanForAmount(payoutAmount)
 	if err != nil {
 		return shieldedPayoutCreditResult{}, err
 	}
-	poolAddress, denomination, ok := s.shieldedPayoutPoolForDenomination(payoutQuantity)
 	if !ok {
-		return shieldedPayoutCreditResult{}, fmt.Errorf("claim payout %s base units does not match any configured shielded pool denomination", payoutQuantity)
+		payoutQuantity, _ := thirdweb.TokenQuantity(payoutAmount, s.cfg.WelcomeTokenDecimals)
+		return shieldedPayoutCreditResult{}, fmt.Errorf("claim payout %s base units cannot be exactly split across configured shielded pool denominations", payoutQuantity)
 	}
-
-	approveResult, err := s.gmrEngine.ContractWrite(ctx, gmrengine.ContractWriteRequest{
-		ABI:             erc20ApproveABI,
-		Args:            []string{poolAddress, denomination},
-		ChainID:         s.cfg.ShieldedPayoutPoolChainID,
-		ContractAddress: s.activeTokenContract(ctx),
-		FunctionName:    "approve",
-	})
+	selected, err := s.selectShieldedPayoutCommitments(plan, noteCommitments)
 	if err != nil {
 		return shieldedPayoutCreditResult{}, err
 	}
-	transactionIDs := []string{approveResult.Transaction.ID}
 
-	if _, err := s.waitForGMRTransaction(ctx, approveResult.Transaction.ID, s.shieldedPayoutWaitTimeout()); err != nil {
-		return shieldedPayoutCreditResult{PayoutError: err.Error(), PayoutStatus: "failed", TransactionIDs: transactionIDs}, err
-	}
-
-	depositResult, err := s.gmrEngine.ContractWrite(ctx, gmrengine.ContractWriteRequest{
-		ABI:             shieldedPayoutPoolABI,
-		Args:            []string{noteCommitment},
-		ChainID:         s.cfg.ShieldedPayoutPoolChainID,
-		ContractAddress: poolAddress,
-		FunctionName:    "depositAndCredit",
-	})
-	if err != nil {
-		return shieldedPayoutCreditResult{PayoutError: err.Error(), PayoutStatus: "failed", TransactionIDs: transactionIDs}, err
-	}
-	transactionIDs = append(transactionIDs, depositResult.Transaction.ID)
-	status := depositResult.Transaction.Status
-	if status == "" {
-		status = "queued"
-	}
-	if s.cfg.ShieldedPayoutRequired {
-		transaction, err := s.waitForGMRTransaction(ctx, depositResult.Transaction.ID, s.shieldedPayoutWaitTimeout())
+	transactionIDs := []string{}
+	creditedCommitments := []string{}
+	status := "queued"
+	for _, note := range selected {
+		approveResult, err := s.gmrEngine.ContractWrite(ctx, gmrengine.ContractWriteRequest{
+			ABI:             erc20ApproveABI,
+			Args:            []string{note.PoolAddress, note.Denomination},
+			ChainID:         s.cfg.ShieldedPayoutPoolChainID,
+			ContractAddress: s.activeTokenContract(ctx),
+			FunctionName:    "approve",
+		})
 		if err != nil {
 			return shieldedPayoutCreditResult{PayoutError: err.Error(), PayoutStatus: "failed", TransactionIDs: transactionIDs}, err
 		}
-		status = transaction.Status
-		if strings.EqualFold(status, "confirmed") {
-			status = "sent"
+		transactionIDs = append(transactionIDs, approveResult.Transaction.ID)
+
+		if _, err := s.waitForGMRTransaction(ctx, approveResult.Transaction.ID, s.shieldedPayoutWaitTimeout()); err != nil {
+			return shieldedPayoutCreditResult{PayoutError: err.Error(), PayoutStatus: "failed", TransactionIDs: transactionIDs}, err
+		}
+
+		depositResult, err := s.gmrEngine.ContractWrite(ctx, gmrengine.ContractWriteRequest{
+			ABI:             shieldedPayoutPoolABI,
+			Args:            []string{note.Commitment},
+			ChainID:         s.cfg.ShieldedPayoutPoolChainID,
+			ContractAddress: note.PoolAddress,
+			FunctionName:    "depositAndCredit",
+		})
+		if err != nil {
+			return shieldedPayoutCreditResult{PayoutError: err.Error(), PayoutStatus: "failed", TransactionIDs: transactionIDs}, err
+		}
+		transactionIDs = append(transactionIDs, depositResult.Transaction.ID)
+		creditedCommitments = append(creditedCommitments, note.Commitment)
+		if depositResult.Transaction.Status != "" {
+			status = depositResult.Transaction.Status
+		}
+		if s.cfg.ShieldedPayoutRequired {
+			transaction, err := s.waitForGMRTransaction(ctx, depositResult.Transaction.ID, s.shieldedPayoutWaitTimeout())
+			if err != nil {
+				return shieldedPayoutCreditResult{PayoutError: err.Error(), PayoutStatus: "failed", TransactionIDs: transactionIDs}, err
+			}
+			status = transaction.Status
 		}
 	}
-	return shieldedPayoutCreditResult{PayoutStatus: status, TransactionIDs: transactionIDs}, nil
+	if strings.EqualFold(status, "confirmed") {
+		status = "sent"
+	}
+	return shieldedPayoutCreditResult{CreditedCommitments: creditedCommitments, PayoutStatus: status, TransactionIDs: transactionIDs}, nil
 }
 
-func (s Server) creditShieldedPayoutCollateralized(ctx context.Context, payoutAmount string, noteCommitment string, liabilityRelease float64) (shieldedPayoutCreditResult, error) {
+func (s Server) creditShieldedPayoutCollateralized(ctx context.Context, payoutAmount string, noteCommitments []ShieldedNoteCommitmentInput, liabilityRelease float64) (shieldedPayoutCreditResult, error) {
 	amount, err := strconv.ParseFloat(strings.TrimSpace(payoutAmount), 64)
 	if err != nil || amount <= 0 {
 		return shieldedPayoutCreditResult{}, errors.New("invalid shielded payout amount")
@@ -614,7 +639,7 @@ func (s Server) creditShieldedPayoutCollateralized(ctx context.Context, payoutAm
 	if err := s.ensureCollateralOutflow(ctx, amount, liabilityRelease); err != nil {
 		return shieldedPayoutCreditResult{}, err
 	}
-	return s.creditShieldedPayout(ctx, payoutAmount, noteCommitment)
+	return s.creditShieldedPayoutSplit(ctx, payoutAmount, noteCommitments)
 }
 
 func (s Server) shieldedPayoutPoolForDenomination(denomination string) (string, string, bool) {
@@ -637,6 +662,110 @@ func (s Server) shieldedPayoutPoolForAmount(payoutAmount string) (string, string
 	}
 	poolAddress, denomination, ok := s.shieldedPayoutPoolForDenomination(payoutQuantity)
 	return poolAddress, denomination, ok, nil
+}
+
+func (s Server) shieldedPayoutPlanForAmount(payoutAmount string) ([]shieldedPayoutPoolPlan, bool, error) {
+	payoutQuantity, err := thirdweb.TokenQuantity(strings.TrimSpace(payoutAmount), s.cfg.WelcomeTokenDecimals)
+	if err != nil {
+		return nil, false, err
+	}
+	remaining, ok := new(big.Int).SetString(payoutQuantity, 10)
+	if !ok || remaining.Sign() <= 0 {
+		return nil, false, errors.New("invalid shielded payout amount")
+	}
+	pools := []shieldedPayoutPoolPlan{}
+	seen := map[string]bool{}
+	for _, pool := range s.cfg.ShieldedPayoutPools {
+		denomination := strings.TrimSpace(pool.Denomination)
+		poolAddress := strings.ToLower(strings.TrimSpace(pool.PoolAddress))
+		if denomination == "" || poolAddress == "" {
+			continue
+		}
+		key := denomination + ":" + poolAddress
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		pools = append(pools, shieldedPayoutPoolPlan{Denomination: denomination, PoolAddress: poolAddress})
+	}
+	if len(pools) == 0 && strings.TrimSpace(s.cfg.ShieldedPayoutDenomination) != "" && strings.TrimSpace(s.cfg.ShieldedPayoutPoolAddress) != "" {
+		pools = append(pools, shieldedPayoutPoolPlan{
+			Denomination: strings.TrimSpace(s.cfg.ShieldedPayoutDenomination),
+			PoolAddress:  strings.ToLower(strings.TrimSpace(s.cfg.ShieldedPayoutPoolAddress)),
+		})
+	}
+	sort.Slice(pools, func(i, j int) bool {
+		left, _ := new(big.Int).SetString(pools[i].Denomination, 10)
+		right, _ := new(big.Int).SetString(pools[j].Denomination, 10)
+		if left == nil {
+			left = big.NewInt(0)
+		}
+		if right == nil {
+			right = big.NewInt(0)
+		}
+		return left.Cmp(right) > 0
+	})
+	plan := []shieldedPayoutPoolPlan{}
+	for _, pool := range pools {
+		denomination, ok := new(big.Int).SetString(strings.TrimSpace(pool.Denomination), 10)
+		if !ok || denomination.Sign() <= 0 {
+			continue
+		}
+		for remaining.Cmp(denomination) >= 0 {
+			plan = append(plan, pool)
+			remaining.Sub(remaining, denomination)
+		}
+	}
+	return plan, remaining.Sign() == 0 && len(plan) > 0, nil
+}
+
+func (s Server) selectShieldedPayoutCommitments(plan []shieldedPayoutPoolPlan, candidates []ShieldedNoteCommitmentInput) ([]ShieldedNoteCommitmentInput, error) {
+	if len(plan) == 0 {
+		return nil, errors.New("shielded payout split plan is empty")
+	}
+	available := make([]ShieldedNoteCommitmentInput, 0, len(candidates))
+	for _, candidate := range candidates {
+		candidate.Commitment = strings.ToLower(strings.TrimSpace(candidate.Commitment))
+		candidate.Denomination = strings.TrimSpace(candidate.Denomination)
+		candidate.PoolAddress = strings.ToLower(strings.TrimSpace(candidate.PoolAddress))
+		if candidate.PoolAddress == "" && len(plan) == 1 {
+			candidate.PoolAddress = plan[0].PoolAddress
+		}
+		if candidate.Denomination == "" && len(plan) == 1 {
+			candidate.Denomination = plan[0].Denomination
+		}
+		if !isBytes32Hex(candidate.Commitment) {
+			return nil, errors.New("shieldedNoteCommitments must contain 32-byte commitments")
+		}
+		if candidate.Denomination == "" || candidate.PoolAddress == "" {
+			return nil, errors.New("shieldedNoteCommitments must include denomination and poolAddress")
+		}
+		if _, _, ok := s.shieldedPayoutPoolForDenomination(candidate.Denomination); !ok {
+			return nil, fmt.Errorf("shielded note denomination %s is not configured", candidate.Denomination)
+		}
+		available = append(available, candidate)
+	}
+	selected := make([]ShieldedNoteCommitmentInput, 0, len(plan))
+	used := make([]bool, len(available))
+	for _, planned := range plan {
+		matchIndex := -1
+		for index, candidate := range available {
+			if used[index] {
+				continue
+			}
+			if strings.TrimSpace(candidate.Denomination) == strings.TrimSpace(planned.Denomination) &&
+				strings.EqualFold(strings.TrimSpace(candidate.PoolAddress), strings.TrimSpace(planned.PoolAddress)) {
+				matchIndex = index
+				break
+			}
+		}
+		if matchIndex < 0 {
+			return nil, fmt.Errorf("missing shielded note commitment for denomination %s", planned.Denomination)
+		}
+		used[matchIndex] = true
+		selected = append(selected, available[matchIndex])
+	}
+	return selected, nil
 }
 
 func (s Server) validateShieldedWithdrawalProof(ctx context.Context, submission gmrengine.ZKProofSubmission, noteCommitment string, nullifierHash string, recipient string) error {

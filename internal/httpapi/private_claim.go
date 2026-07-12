@@ -22,22 +22,27 @@ import (
 )
 
 type PrivateClaimRequest struct {
-	NullifierHash          string `json:"nullifierHash"`
-	Root                   string `json:"root"`
-	ShieldedNoteCommitment string `json:"shieldedNoteCommitment"`
-	TradeID                string `json:"tradeId"`
-	ZKProofSubmissionID    string `json:"zkProofSubmissionId"`
+	NullifierHash            string                        `json:"nullifierHash"`
+	PrivacyReceiptCommitment string                        `json:"privacyReceiptCommitment"`
+	PrivacyReceiptTxHash     string                        `json:"privacyReceiptTxHash"`
+	Root                     string                        `json:"root"`
+	ShieldedNoteCommitment   string                        `json:"shieldedNoteCommitment"`
+	ShieldedNoteCommitments  []ShieldedNoteCommitmentInput `json:"shieldedNoteCommitments"`
+	TradeID                  string                        `json:"tradeId"`
+	ZKProofSubmissionID      string                        `json:"zkProofSubmissionId"`
 }
 
 type PrivateClaimProofSubmissionRequest struct {
-	Context       json.RawMessage `json:"context"`
-	DomainID      int64           `json:"domainId"`
-	NullifierHash string          `json:"nullifierHash"`
-	Proof         json.RawMessage `json:"proof"`
-	ProofSystem   string          `json:"proofSystem"`
-	PublicSignals json.RawMessage `json:"publicSignals"`
-	TradeID       string          `json:"tradeId"`
-	VK            json.RawMessage `json:"vk"`
+	Context                  json.RawMessage `json:"context"`
+	DomainID                 int64           `json:"domainId"`
+	NullifierHash            string          `json:"nullifierHash"`
+	PrivacyReceiptCommitment string          `json:"privacyReceiptCommitment"`
+	PrivacyReceiptTxHash     string          `json:"privacyReceiptTxHash"`
+	Proof                    json.RawMessage `json:"proof"`
+	ProofSystem              string          `json:"proofSystem"`
+	PublicSignals            json.RawMessage `json:"publicSignals"`
+	TradeID                  string          `json:"tradeId"`
+	VK                       json.RawMessage `json:"vk"`
 }
 
 type privateClaimScriptResponse struct {
@@ -155,7 +160,7 @@ func (s Server) claimPrivatePayout(c *fiber.Ctx) error {
 	shieldedPayout := false
 	directPayoutFallback := false
 	if s.shieldedPayoutConfigured() {
-		_, _, supported, err := s.shieldedPayoutPoolForAmount(payoutAmount)
+		_, supported, err := s.shieldedPayoutPlanForAmount(payoutAmount)
 		if err != nil {
 			return fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
@@ -168,10 +173,13 @@ func (s Server) claimPrivatePayout(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusUnprocessableEntity, "this payout amount is not supported by a configured shielded pool")
 		}
 	}
-	if shieldedPayout && !isBytes32Hex(request.ShieldedNoteCommitment) {
-		return fiber.NewError(fiber.StatusBadRequest, "shieldedNoteCommitment is required for shielded payouts")
+	if shieldedPayout && len(request.ShieldedNoteCommitments) == 0 {
+		if isBytes32Hex(request.ShieldedNoteCommitment) {
+			request.ShieldedNoteCommitments = []ShieldedNoteCommitmentInput{{Commitment: request.ShieldedNoteCommitment}}
+		} else {
+			return fiber.NewError(fiber.StatusBadRequest, "shieldedNoteCommitments are required for shielded payouts")
+		}
 	}
-
 	claim, reservedTrade, err := s.store.ReservePrivateClaim(c.Context(), user.ID, request.TradeID, trade.PrivateClaimLeaf, root, nullifierHash, request.ZKProofSubmissionID)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
@@ -195,12 +203,14 @@ func (s Server) claimPrivatePayout(c *fiber.Ctx) error {
 	payoutStatus := ""
 	payoutError := ""
 	payoutMode := "direct"
+	shieldedPayoutCommitments := []string{}
 	if shieldedPayout {
 		payoutMode = "shielded"
-		creditResult, payoutErr := s.creditShieldedPayoutCollateralized(c.Context(), settlementAmountString(reservedTrade.SettlementPayout), request.ShieldedNoteCommitment, reservedTrade.SettlementPayout)
+		creditResult, payoutErr := s.creditShieldedPayoutCollateralized(c.Context(), settlementAmountString(reservedTrade.SettlementPayout), request.ShieldedNoteCommitments, reservedTrade.SettlementPayout)
 		transactionIDs = creditResult.TransactionIDs
 		payoutStatus = creditResult.PayoutStatus
 		payoutError = creditResult.PayoutError
+		shieldedPayoutCommitments = creditResult.CreditedCommitments
 		if payoutErr != nil {
 			claim, reservedTrade, _ = s.store.CompletePrivateClaimPayout(c.Context(), user.ID, claim.ID, transactionIDs, "failed", payoutErr.Error())
 			return fiber.NewError(fiber.StatusBadGateway, payoutErr.Error())
@@ -239,16 +249,17 @@ func (s Server) claimPrivatePayout(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to load portfolio")
 	}
 	return c.JSON(fiber.Map{
-		"claim":                 claim,
-		"portfolio":             portfolio,
-		"trade":                 reservedTrade,
-		"payoutStatus":          payoutStatus,
-		"payoutError":           payoutError,
-		"payoutMode":            payoutMode,
-		"registryTransactionId": registryTransactionID,
-		"registryStatus":        registryStatus,
-		"shieldedPayout":        shieldedPayout,
-		"transactionIds":        transactionIDs,
+		"claim":                     claim,
+		"portfolio":                 portfolio,
+		"trade":                     reservedTrade,
+		"payoutStatus":              payoutStatus,
+		"payoutError":               payoutError,
+		"payoutMode":                payoutMode,
+		"registryTransactionId":     registryTransactionID,
+		"registryStatus":            registryStatus,
+		"shieldedPayout":            shieldedPayout,
+		"shieldedPayoutCommitments": shieldedPayoutCommitments,
+		"transactionIds":            transactionIDs,
 	})
 }
 
