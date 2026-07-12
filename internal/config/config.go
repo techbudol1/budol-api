@@ -11,84 +11,88 @@ import (
 )
 
 type Config struct {
-	Addr                               string
-	AppEnv                             string
-	AdminAPIKey                        string
-	AdminCookieName                    string
-	AdminPassword                      string
-	AdminUsername                      string
-	AllowedOrigins                     []string
-	ArbitrumSepoliaRPCURL              string
-	WelcomeTokenRPCURL                 string
-	CollateralBufferBps                int
-	CollateralGuaranteeEnabled         bool
-	PublicAppURL                       string
-	PublicAPIURL                       string
-	PrivyAPIBase                       string
-	PrivyAppID                         string
-	PrivyAppSecret                     string
-	PrivyVerificationKey               string
-	SessionCookieName                  string
-	SessionSecret                      string
-	SessionTTL                         time.Duration
-	SeedDemoPolls                      bool
-	ThirdwebAPIBase                    string
-	ThirdwebSecretKey                  string
-	ThirdwebMeURL                      string
-	ThirdwebSendURL                    string
-	GMREngineAPIBase                   string
-	GMREngineAPIKey                    string
-	GoogleOAuthClientID                string
-	GoogleOAuthClientSecret            string
-	GoogleOAuthRedirectURL             string
-	ProjectWallet                      string
-	PrivateClaimRegistryAddress        string
-	PrivateClaimRegistryChainID        int
-	PrivateClaimRegistryRequired       bool
-	PrivateClaimRegistryConfirmTimeout time.Duration
-	ShieldedPayoutEnabled              bool
-	ShieldedPayoutPoolAddress          string
-	ShieldedPayoutPoolChainID          int
-	ShieldedPayoutDenomination         string
-	ShieldedPayoutPools                []ShieldedPayoutPool
-	ShieldedPayoutRequired             bool
-	ShieldedPayoutDirectFallback       bool
-	ShieldedPayoutConfirmTimeout       time.Duration
-	ShieldedWithdrawalBatchLimit       int
-	ShieldedWithdrawalBaseBackoff      time.Duration
-	ShieldedWithdrawalDelay            time.Duration
-	ShieldedWithdrawalMaxAttempts      int
-	ShieldedWithdrawalPollInterval     time.Duration
-	ShieldedWithdrawalRelayerAddress   string
-	ShieldedWithdrawalRelayerFee       string
-	ShieldedWithdrawalStaleProcessing  time.Duration
-	ShieldedWithdrawalMode             string
-	WelcomeTokenChainID                int
-	WelcomeTokenContract               string
-	WelcomeTokenAmount                 string
-	WelcomeTokenDecimals               int
-	WelcomeTokenSymbol                 string
-	SmartWalletEnabled                 bool
-	SmartWalletChainID                 int
-	SmartWalletRPCURL                  string
-	SmartWalletEntryPointAddress       string
-	SmartWalletEntryPointVersion       string
-	SmartWalletFactoryAddress          string
-	SmartWalletBundlerURL              string
-	MemgraphURI                        string
-	MemgraphUser                       string
-	MemgraphPassword                   string
-	NewsAgentEnabled                   bool
-	NewsAgentGDELTURL                  string
-	NewsAgentRSSURLs                   []string
-	NewsAgentInterval                  time.Duration
-	NewsAgentMaxArticles               int
-	NewsAgentMaxCandidates             int
-	NewsAgentPrimaryDomains            []string
-	NewsAgentQuery                     string
-	NewsAgentSourceDomains             []string
-	OpenAIAPIKey                       string
-	OpenAIModel                        string
+	Addr                                string
+	AppEnv                              string
+	AdminAPIKey                         string
+	AdminCookieName                     string
+	AdminPassword                       string
+	AdminUsername                       string
+	AllowedOrigins                      []string
+	ArbitrumSepoliaRPCURL               string
+	WelcomeTokenRPCURL                  string
+	CollateralBufferBps                 int
+	CollateralGuaranteeEnabled          bool
+	PublicAppURL                        string
+	PublicAPIURL                        string
+	PrivyAPIBase                        string
+	PrivyAppID                          string
+	PrivyAppSecret                      string
+	PrivyVerificationKey                string
+	SessionCookieName                   string
+	SessionSecret                       string
+	SessionTTL                          time.Duration
+	SeedDemoPolls                       bool
+	ThirdwebAPIBase                     string
+	ThirdwebSecretKey                   string
+	ThirdwebMeURL                       string
+	ThirdwebSendURL                     string
+	GMREngineAPIBase                    string
+	GMREngineAPIKey                     string
+	GoogleOAuthClientID                 string
+	GoogleOAuthClientSecret             string
+	GoogleOAuthRedirectURL              string
+	ProjectWallet                       string
+	ZENPrivacyAccessFeeCollectorAddress string
+	ZENHidePositionFee                  string
+	ZENPrivateClaimFee                  string
+	ZENShieldedPayoutFee                string
+	PrivateClaimRegistryAddress         string
+	PrivateClaimRegistryChainID         int
+	PrivateClaimRegistryRequired        bool
+	PrivateClaimRegistryConfirmTimeout  time.Duration
+	ShieldedPayoutEnabled               bool
+	ShieldedPayoutPoolAddress           string
+	ShieldedPayoutPoolChainID           int
+	ShieldedPayoutDenomination          string
+	ShieldedPayoutPools                 []ShieldedPayoutPool
+	ShieldedPayoutRequired              bool
+	ShieldedPayoutDirectFallback        bool
+	ShieldedPayoutConfirmTimeout        time.Duration
+	ShieldedWithdrawalBatchLimit        int
+	ShieldedWithdrawalBaseBackoff       time.Duration
+	ShieldedWithdrawalDelay             time.Duration
+	ShieldedWithdrawalMaxAttempts       int
+	ShieldedWithdrawalPollInterval      time.Duration
+	ShieldedWithdrawalRelayerAddress    string
+	ShieldedWithdrawalRelayerFee        string
+	ShieldedWithdrawalStaleProcessing   time.Duration
+	ShieldedWithdrawalMode              string
+	WelcomeTokenChainID                 int
+	WelcomeTokenContract                string
+	WelcomeTokenAmount                  string
+	WelcomeTokenDecimals                int
+	WelcomeTokenSymbol                  string
+	SmartWalletEnabled                  bool
+	SmartWalletChainID                  int
+	SmartWalletRPCURL                   string
+	SmartWalletEntryPointAddress        string
+	SmartWalletEntryPointVersion        string
+	SmartWalletFactoryAddress           string
+	SmartWalletBundlerURL               string
+	MemgraphURI                         string
+	MemgraphUser                        string
+	MemgraphPassword                    string
+	NewsAgentEnabled                    bool
+	NewsAgentGDELTURL                   string
+	NewsAgentRSSURLs                    []string
+	NewsAgentInterval                   time.Duration
+	NewsAgentMaxArticles                int
+	NewsAgentMaxCandidates              int
+	NewsAgentPrimaryDomains             []string
+	NewsAgentQuery                      string
+	NewsAgentSourceDomains              []string
+	OpenAIAPIKey                        string
+	OpenAIModel                         string
 }
 
 type ShieldedPayoutPool struct {
@@ -100,83 +104,87 @@ func Load() (Config, error) {
 	loadDotEnv(".env.server", "../.env.server")
 
 	cfg := Config{
-		Addr:                               env("SERVER_ADDR", ":8080"),
-		AppEnv:                             env("APP_ENV", "development"),
-		AdminAPIKey:                        os.Getenv("ADMIN_API_KEY"),
-		AdminCookieName:                    env("ADMIN_COOKIE_NAME", "budol_admin_session"),
-		AdminPassword:                      env("ADMIN_PASSWORD", "MaryAnn1101"),
-		AdminUsername:                      env("ADMIN_USERNAME", "destrega"),
-		AllowedOrigins:                     splitCSV(env("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")),
-		ArbitrumSepoliaRPCURL:              env("ARBITRUM_SEPOLIA_RPC_URL", "https://sepolia-rollup.arbitrum.io/rpc"),
-		WelcomeTokenRPCURL:                 env("WELCOME_TOKEN_RPC_URL", "https://horizen-testnet.rpc.caldera.xyz/http"),
-		CollateralBufferBps:                envNonNegativeInt("COLLATERAL_BUFFER_BPS", 0),
-		CollateralGuaranteeEnabled:         envBool("COLLATERAL_GUARANTEE_ENABLED", false),
-		PrivyAPIBase:                       env("PRIVY_API_BASE", "https://api.privy.io"),
-		PrivyAppID:                         os.Getenv("PRIVY_APP_ID"),
-		PrivyAppSecret:                     os.Getenv("PRIVY_APP_SECRET"),
-		PrivyVerificationKey:               os.Getenv("PRIVY_VERIFICATION_KEY"),
-		PublicAppURL:                       env("PUBLIC_APP_URL", "http://localhost:3000"),
-		PublicAPIURL:                       env("PUBLIC_API_URL", "http://localhost:8080"),
-		SessionCookieName:                  env("SESSION_COOKIE_NAME", "budol_session"),
-		SessionSecret:                      os.Getenv("SESSION_SECRET"),
-		SessionTTL:                         time.Duration(envInt("SESSION_TTL_HOURS", 24)) * time.Hour,
-		SeedDemoPolls:                      envBool("SEED_DEMO_POLLS", false),
-		ThirdwebAPIBase:                    env("THIRDWEB_API_BASE", "https://api.thirdweb.com"),
-		ThirdwebSecretKey:                  os.Getenv("THIRDWEB_SECRET_KEY"),
-		ThirdwebMeURL:                      env("THIRDWEB_ME_URL", "https://api.thirdweb.com/v1/wallets/me"),
-		ThirdwebSendURL:                    env("THIRDWEB_SEND_URL", "https://api.thirdweb.com/v1/wallets/send"),
-		GMREngineAPIBase:                   env("GMR_ENGINE_API_BASE", "http://localhost:8090"),
-		GMREngineAPIKey:                    os.Getenv("GMR_ENGINE_API_KEY"),
-		GoogleOAuthClientID:                os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
-		GoogleOAuthClientSecret:            os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
-		GoogleOAuthRedirectURL:             env("GOOGLE_OAUTH_REDIRECT_URL", env("PUBLIC_API_URL", "http://localhost:8080")+"/api/auth/google/callback"),
-		ProjectWallet:                      firstEnv("BUDOL_PROJECT_WALLET_ADDRESS", "THIRDWEB_PROJECT_WALLET_ADDRESS", "SERVER_VAULT_WALLET_ADDRESS"),
-		PrivateClaimRegistryAddress:        os.Getenv("PRIVATE_CLAIM_REGISTRY_ADDRESS"),
-		PrivateClaimRegistryChainID:        envInt("PRIVATE_CLAIM_REGISTRY_CHAIN_ID", envInt("WELCOME_TOKEN_CHAIN_ID", 421614)),
-		PrivateClaimRegistryRequired:       envBool("PRIVATE_CLAIM_REGISTRY_REQUIRED", false),
-		PrivateClaimRegistryConfirmTimeout: time.Duration(envInt("PRIVATE_CLAIM_REGISTRY_CONFIRM_TIMEOUT_SECONDS", 90)) * time.Second,
-		ShieldedPayoutEnabled:              envBool("SHIELDED_PAYOUT_ENABLED", false),
-		ShieldedPayoutPoolAddress:          os.Getenv("SHIELDED_PAYOUT_POOL_ADDRESS"),
-		ShieldedPayoutPoolChainID:          envInt("SHIELDED_PAYOUT_POOL_CHAIN_ID", envInt("WELCOME_TOKEN_CHAIN_ID", 421614)),
-		ShieldedPayoutDenomination:         os.Getenv("SHIELDED_PAYOUT_DENOMINATION"),
-		ShieldedPayoutRequired:             envBool("SHIELDED_PAYOUT_REQUIRED", false),
-		ShieldedPayoutDirectFallback:       envBool("SHIELDED_PAYOUT_DIRECT_FALLBACK", false),
-		ShieldedPayoutConfirmTimeout:       time.Duration(envInt("SHIELDED_PAYOUT_CONFIRM_TIMEOUT_SECONDS", 90)) * time.Second,
-		ShieldedWithdrawalBatchLimit:       envInt("SHIELDED_WITHDRAWAL_BATCH_LIMIT", 5),
-		ShieldedWithdrawalBaseBackoff:      time.Duration(envInt("SHIELDED_WITHDRAWAL_BASE_BACKOFF_SECONDS", 120)) * time.Second,
-		ShieldedWithdrawalDelay:            time.Duration(envInt("SHIELDED_WITHDRAWAL_DELAY_SECONDS", 600)) * time.Second,
-		ShieldedWithdrawalMaxAttempts:      envInt("SHIELDED_WITHDRAWAL_MAX_ATTEMPTS", 3),
-		ShieldedWithdrawalPollInterval:     time.Duration(envInt("SHIELDED_WITHDRAWAL_POLL_INTERVAL_SECONDS", 15)) * time.Second,
-		ShieldedWithdrawalRelayerAddress:   os.Getenv("SHIELDED_WITHDRAWAL_RELAYER_ADDRESS"),
-		ShieldedWithdrawalRelayerFee:       env("SHIELDED_WITHDRAWAL_RELAYER_FEE", "0"),
-		ShieldedWithdrawalStaleProcessing:  time.Duration(envInt("SHIELDED_WITHDRAWAL_STALE_PROCESSING_SECONDS", 600)) * time.Second,
-		ShieldedWithdrawalMode:             strings.ToLower(env("SHIELDED_WITHDRAWAL_MODE", "zkverify")),
-		WelcomeTokenChainID:                envInt("WELCOME_TOKEN_CHAIN_ID", 2651420),
-		WelcomeTokenContract:               env("WELCOME_TOKEN_CONTRACT", "0x689513fb392e460c6d9225f911fce57fe50d6db4"),
-		WelcomeTokenAmount:                 env("WELCOME_TOKEN_AMOUNT", ""),
-		WelcomeTokenDecimals:               envInt("WELCOME_TOKEN_DECIMALS", 18),
-		WelcomeTokenSymbol:                 env("WELCOME_TOKEN_SYMBOL", "BUDOL"),
-		SmartWalletEnabled:                 envBool("HORIZEN_AA_ENABLED", false),
-		SmartWalletChainID:                 envInt("HORIZEN_AA_CHAIN_ID", envInt("WELCOME_TOKEN_CHAIN_ID", 2651420)),
-		SmartWalletRPCURL:                  env("HORIZEN_AA_RPC_URL", env("WELCOME_TOKEN_RPC_URL", "https://horizen-testnet.rpc.caldera.xyz/http")),
-		SmartWalletEntryPointAddress:       os.Getenv("HORIZEN_AA_ENTRYPOINT_ADDRESS"),
-		SmartWalletEntryPointVersion:       env("HORIZEN_AA_ENTRYPOINT_VERSION", "0.8"),
-		SmartWalletFactoryAddress:          os.Getenv("HORIZEN_AA_FACTORY_ADDRESS"),
-		SmartWalletBundlerURL:              os.Getenv("HORIZEN_AA_BUNDLER_URL"),
-		MemgraphURI:                        env("MEMGRAPH_URI", "bolt://localhost:7687"),
-		MemgraphUser:                       os.Getenv("MEMGRAPH_USER"),
-		MemgraphPassword:                   os.Getenv("MEMGRAPH_PASSWORD"),
-		NewsAgentEnabled:                   envBool("NEWS_AGENT_ENABLED", true),
-		NewsAgentGDELTURL:                  env("NEWS_AGENT_GDELT_URL", "https://api.gdeltproject.org/api/v2/doc/doc"),
-		NewsAgentRSSURLs:                   splitCSV(env("NEWS_AGENT_RSS_URLS", "https://newsinfo.inquirer.net/feed,https://www.philstar.com/rss/headlines,https://www.rappler.com/feed/")),
-		NewsAgentInterval:                  time.Duration(envInt("NEWS_AGENT_INTERVAL_MINUTES", 15)) * time.Minute,
-		NewsAgentMaxArticles:               envInt("NEWS_AGENT_MAX_ARTICLES", 40),
-		NewsAgentMaxCandidates:             envInt("NEWS_AGENT_MAX_CANDIDATES", 5),
-		NewsAgentPrimaryDomains:            splitCSV(env("NEWS_AGENT_PRIMARY_DOMAINS", "officialgazette.gov.ph,comelec.gov.ph,pagasa.dost.gov.ph,psa.gov.ph,bsp.gov.ph,pse.com.ph")),
-		NewsAgentQuery:                     env("NEWS_AGENT_QUERY", "Philippines OR Filipino OR Manila"),
-		NewsAgentSourceDomains:             splitCSV(env("NEWS_AGENT_SOURCE_DOMAINS", "gmanetwork.com,abs-cbn.com,inquirer.net,rappler.com,philstar.com,bworldonline.com,pna.gov.ph,officialgazette.gov.ph,comelec.gov.ph,pagasa.dost.gov.ph,psa.gov.ph,bsp.gov.ph,pse.com.ph")),
-		OpenAIAPIKey:                       strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
-		OpenAIModel:                        env("OPENAI_MODEL", "gpt-5.5"),
+		Addr:                                env("SERVER_ADDR", ":8080"),
+		AppEnv:                              env("APP_ENV", "development"),
+		AdminAPIKey:                         os.Getenv("ADMIN_API_KEY"),
+		AdminCookieName:                     env("ADMIN_COOKIE_NAME", "budol_admin_session"),
+		AdminPassword:                       env("ADMIN_PASSWORD", "MaryAnn1101"),
+		AdminUsername:                       env("ADMIN_USERNAME", "destrega"),
+		AllowedOrigins:                      splitCSV(env("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")),
+		ArbitrumSepoliaRPCURL:               env("ARBITRUM_SEPOLIA_RPC_URL", "https://sepolia-rollup.arbitrum.io/rpc"),
+		WelcomeTokenRPCURL:                  env("WELCOME_TOKEN_RPC_URL", "https://horizen-testnet.rpc.caldera.xyz/http"),
+		CollateralBufferBps:                 envNonNegativeInt("COLLATERAL_BUFFER_BPS", 0),
+		CollateralGuaranteeEnabled:          envBool("COLLATERAL_GUARANTEE_ENABLED", false),
+		PrivyAPIBase:                        env("PRIVY_API_BASE", "https://api.privy.io"),
+		PrivyAppID:                          os.Getenv("PRIVY_APP_ID"),
+		PrivyAppSecret:                      os.Getenv("PRIVY_APP_SECRET"),
+		PrivyVerificationKey:                os.Getenv("PRIVY_VERIFICATION_KEY"),
+		PublicAppURL:                        env("PUBLIC_APP_URL", "http://localhost:3000"),
+		PublicAPIURL:                        env("PUBLIC_API_URL", "http://localhost:8080"),
+		SessionCookieName:                   env("SESSION_COOKIE_NAME", "budol_session"),
+		SessionSecret:                       os.Getenv("SESSION_SECRET"),
+		SessionTTL:                          time.Duration(envInt("SESSION_TTL_HOURS", 24)) * time.Hour,
+		SeedDemoPolls:                       envBool("SEED_DEMO_POLLS", false),
+		ThirdwebAPIBase:                     env("THIRDWEB_API_BASE", "https://api.thirdweb.com"),
+		ThirdwebSecretKey:                   os.Getenv("THIRDWEB_SECRET_KEY"),
+		ThirdwebMeURL:                       env("THIRDWEB_ME_URL", "https://api.thirdweb.com/v1/wallets/me"),
+		ThirdwebSendURL:                     env("THIRDWEB_SEND_URL", "https://api.thirdweb.com/v1/wallets/send"),
+		GMREngineAPIBase:                    env("GMR_ENGINE_API_BASE", "http://localhost:8090"),
+		GMREngineAPIKey:                     os.Getenv("GMR_ENGINE_API_KEY"),
+		GoogleOAuthClientID:                 os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
+		GoogleOAuthClientSecret:             os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
+		GoogleOAuthRedirectURL:              env("GOOGLE_OAUTH_REDIRECT_URL", env("PUBLIC_API_URL", "http://localhost:8080")+"/api/auth/google/callback"),
+		ProjectWallet:                       firstEnv("BUDOL_PROJECT_WALLET_ADDRESS", "THIRDWEB_PROJECT_WALLET_ADDRESS", "SERVER_VAULT_WALLET_ADDRESS"),
+		ZENPrivacyAccessFeeCollectorAddress: os.Getenv("ZEN_PRIVACY_ACCESS_FEE_COLLECTOR_ADDRESS"),
+		ZENHidePositionFee:                  env("ZEN_HIDE_POSITION_FEE", "0"),
+		ZENPrivateClaimFee:                  env("ZEN_PRIVATE_CLAIM_FEE", "0"),
+		ZENShieldedPayoutFee:                env("ZEN_SHIELDED_PAYOUT_FEE", "0"),
+		PrivateClaimRegistryAddress:         os.Getenv("PRIVATE_CLAIM_REGISTRY_ADDRESS"),
+		PrivateClaimRegistryChainID:         envInt("PRIVATE_CLAIM_REGISTRY_CHAIN_ID", envInt("WELCOME_TOKEN_CHAIN_ID", 421614)),
+		PrivateClaimRegistryRequired:        envBool("PRIVATE_CLAIM_REGISTRY_REQUIRED", false),
+		PrivateClaimRegistryConfirmTimeout:  time.Duration(envInt("PRIVATE_CLAIM_REGISTRY_CONFIRM_TIMEOUT_SECONDS", 90)) * time.Second,
+		ShieldedPayoutEnabled:               envBool("SHIELDED_PAYOUT_ENABLED", false),
+		ShieldedPayoutPoolAddress:           os.Getenv("SHIELDED_PAYOUT_POOL_ADDRESS"),
+		ShieldedPayoutPoolChainID:           envInt("SHIELDED_PAYOUT_POOL_CHAIN_ID", envInt("WELCOME_TOKEN_CHAIN_ID", 421614)),
+		ShieldedPayoutDenomination:          os.Getenv("SHIELDED_PAYOUT_DENOMINATION"),
+		ShieldedPayoutRequired:              envBool("SHIELDED_PAYOUT_REQUIRED", false),
+		ShieldedPayoutDirectFallback:        envBool("SHIELDED_PAYOUT_DIRECT_FALLBACK", false),
+		ShieldedPayoutConfirmTimeout:        time.Duration(envInt("SHIELDED_PAYOUT_CONFIRM_TIMEOUT_SECONDS", 90)) * time.Second,
+		ShieldedWithdrawalBatchLimit:        envInt("SHIELDED_WITHDRAWAL_BATCH_LIMIT", 5),
+		ShieldedWithdrawalBaseBackoff:       time.Duration(envInt("SHIELDED_WITHDRAWAL_BASE_BACKOFF_SECONDS", 120)) * time.Second,
+		ShieldedWithdrawalDelay:             time.Duration(envInt("SHIELDED_WITHDRAWAL_DELAY_SECONDS", 600)) * time.Second,
+		ShieldedWithdrawalMaxAttempts:       envInt("SHIELDED_WITHDRAWAL_MAX_ATTEMPTS", 3),
+		ShieldedWithdrawalPollInterval:      time.Duration(envInt("SHIELDED_WITHDRAWAL_POLL_INTERVAL_SECONDS", 15)) * time.Second,
+		ShieldedWithdrawalRelayerAddress:    os.Getenv("SHIELDED_WITHDRAWAL_RELAYER_ADDRESS"),
+		ShieldedWithdrawalRelayerFee:        env("SHIELDED_WITHDRAWAL_RELAYER_FEE", "0"),
+		ShieldedWithdrawalStaleProcessing:   time.Duration(envInt("SHIELDED_WITHDRAWAL_STALE_PROCESSING_SECONDS", 600)) * time.Second,
+		ShieldedWithdrawalMode:              strings.ToLower(env("SHIELDED_WITHDRAWAL_MODE", "zkverify")),
+		WelcomeTokenChainID:                 envInt("WELCOME_TOKEN_CHAIN_ID", 2651420),
+		WelcomeTokenContract:                env("WELCOME_TOKEN_CONTRACT", "0x689513fb392e460c6d9225f911fce57fe50d6db4"),
+		WelcomeTokenAmount:                  env("WELCOME_TOKEN_AMOUNT", ""),
+		WelcomeTokenDecimals:                envInt("WELCOME_TOKEN_DECIMALS", 18),
+		WelcomeTokenSymbol:                  env("WELCOME_TOKEN_SYMBOL", "BUDOL"),
+		SmartWalletEnabled:                  envBool("HORIZEN_AA_ENABLED", false),
+		SmartWalletChainID:                  envInt("HORIZEN_AA_CHAIN_ID", envInt("WELCOME_TOKEN_CHAIN_ID", 2651420)),
+		SmartWalletRPCURL:                   env("HORIZEN_AA_RPC_URL", env("WELCOME_TOKEN_RPC_URL", "https://horizen-testnet.rpc.caldera.xyz/http")),
+		SmartWalletEntryPointAddress:        os.Getenv("HORIZEN_AA_ENTRYPOINT_ADDRESS"),
+		SmartWalletEntryPointVersion:        env("HORIZEN_AA_ENTRYPOINT_VERSION", "0.8"),
+		SmartWalletFactoryAddress:           os.Getenv("HORIZEN_AA_FACTORY_ADDRESS"),
+		SmartWalletBundlerURL:               os.Getenv("HORIZEN_AA_BUNDLER_URL"),
+		MemgraphURI:                         env("MEMGRAPH_URI", "bolt://localhost:7687"),
+		MemgraphUser:                        os.Getenv("MEMGRAPH_USER"),
+		MemgraphPassword:                    os.Getenv("MEMGRAPH_PASSWORD"),
+		NewsAgentEnabled:                    envBool("NEWS_AGENT_ENABLED", true),
+		NewsAgentGDELTURL:                   env("NEWS_AGENT_GDELT_URL", "https://api.gdeltproject.org/api/v2/doc/doc"),
+		NewsAgentRSSURLs:                    splitCSV(env("NEWS_AGENT_RSS_URLS", "https://newsinfo.inquirer.net/feed,https://www.philstar.com/rss/headlines,https://www.rappler.com/feed/")),
+		NewsAgentInterval:                   time.Duration(envInt("NEWS_AGENT_INTERVAL_MINUTES", 15)) * time.Minute,
+		NewsAgentMaxArticles:                envInt("NEWS_AGENT_MAX_ARTICLES", 40),
+		NewsAgentMaxCandidates:              envInt("NEWS_AGENT_MAX_CANDIDATES", 5),
+		NewsAgentPrimaryDomains:             splitCSV(env("NEWS_AGENT_PRIMARY_DOMAINS", "officialgazette.gov.ph,comelec.gov.ph,pagasa.dost.gov.ph,psa.gov.ph,bsp.gov.ph,pse.com.ph")),
+		NewsAgentQuery:                      env("NEWS_AGENT_QUERY", "Philippines OR Filipino OR Manila"),
+		NewsAgentSourceDomains:              splitCSV(env("NEWS_AGENT_SOURCE_DOMAINS", "gmanetwork.com,abs-cbn.com,inquirer.net,rappler.com,philstar.com,bworldonline.com,pna.gov.ph,officialgazette.gov.ph,comelec.gov.ph,pagasa.dost.gov.ph,psa.gov.ph,bsp.gov.ph,pse.com.ph")),
+		OpenAIAPIKey:                        strings.TrimSpace(os.Getenv("OPENAI_API_KEY")),
+		OpenAIModel:                         env("OPENAI_MODEL", "gpt-5.5"),
 	}
 	cfg.ShieldedPayoutPools = parseShieldedPayoutPools(os.Getenv("SHIELDED_PAYOUT_POOLS"), cfg.ShieldedPayoutDenomination, cfg.ShieldedPayoutPoolAddress)
 
@@ -191,6 +199,18 @@ func Load() (Config, error) {
 	}
 	if cfg.CollateralBufferBps < 0 || cfg.CollateralBufferBps > 10000 {
 		return Config{}, errors.New("COLLATERAL_BUFFER_BPS must be between 0 and 10000")
+	}
+	if strings.TrimSpace(cfg.ZENPrivacyAccessFeeCollectorAddress) != "" && !isEVMAddress(cfg.ZENPrivacyAccessFeeCollectorAddress) {
+		return Config{}, errors.New("ZEN_PRIVACY_ACCESS_FEE_COLLECTOR_ADDRESS must be a valid EVM address")
+	}
+	if !isNonNegativeInteger(cfg.ZENHidePositionFee) {
+		return Config{}, errors.New("ZEN_HIDE_POSITION_FEE must be a non-negative integer in native tZEN base units")
+	}
+	if !isNonNegativeInteger(cfg.ZENPrivateClaimFee) {
+		return Config{}, errors.New("ZEN_PRIVATE_CLAIM_FEE must be a non-negative integer in native tZEN base units")
+	}
+	if !isNonNegativeInteger(cfg.ZENShieldedPayoutFee) {
+		return Config{}, errors.New("ZEN_SHIELDED_PAYOUT_FEE must be a non-negative integer in native tZEN base units")
 	}
 	if cfg.ShieldedPayoutRequired && !cfg.ShieldedPayoutEnabled {
 		return Config{}, errors.New("SHIELDED_PAYOUT_REQUIRED=true requires SHIELDED_PAYOUT_ENABLED=true")

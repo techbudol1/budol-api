@@ -357,6 +357,107 @@ func (c *Client) WaitForERC20Transfer(ctx context.Context, tokenAddress string, 
 	return false, nil
 }
 
+func (c *Client) WaitForNativeTransfer(ctx context.Context, transactionHash string, from string, to string, minimumAmountRaw string) (bool, error) {
+	for attempt := 0; attempt < 8; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return false, ctx.Err()
+			case <-time.After(1500 * time.Millisecond):
+			}
+		}
+		found, pending, err := c.NativeTransferInTransaction(ctx, transactionHash, from, to, minimumAmountRaw)
+		if err != nil {
+			return false, err
+		}
+		if found {
+			return true, nil
+		}
+		if !pending {
+			return false, nil
+		}
+	}
+	return false, nil
+}
+
+func (c *Client) NativeTransferInTransaction(ctx context.Context, transactionHash string, from string, to string, minimumAmountRaw string) (bool, bool, error) {
+	transactionHash = strings.ToLower(strings.TrimSpace(transactionHash))
+	from = strings.ToLower(strings.TrimSpace(from))
+	to = strings.ToLower(strings.TrimSpace(to))
+	minimumAmountRaw = strings.TrimSpace(minimumAmountRaw)
+	if c.rpcURL == "" {
+		return false, false, errors.New("RPC URL is not configured")
+	}
+	if !evmAddressPattern.MatchString(from) || !evmAddressPattern.MatchString(to) {
+		return false, false, errors.New("invalid native transfer address")
+	}
+	if !strings.HasPrefix(transactionHash, "0x") || len(transactionHash) != 66 {
+		return false, false, errors.New("invalid transaction hash")
+	}
+	minimum, ok := new(big.Int).SetString(minimumAmountRaw, 10)
+	if !ok || minimum.Sign() < 0 {
+		return false, false, errors.New("invalid native transfer amount")
+	}
+
+	var receiptResponse struct {
+		Result *struct {
+			Status string `json:"status"`
+		} `json:"result"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := c.rpc(ctx, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "eth_getTransactionReceipt",
+		"params":  []any{transactionHash},
+	}, &receiptResponse); err != nil {
+		return false, false, err
+	}
+	if receiptResponse.Error != nil {
+		return false, false, fmt.Errorf("RPC transaction receipt failed: %s", receiptResponse.Error.Message)
+	}
+	if receiptResponse.Result == nil {
+		return false, true, nil
+	}
+	if strings.ToLower(receiptResponse.Result.Status) != "0x1" {
+		return false, false, nil
+	}
+
+	var txResponse struct {
+		Result *struct {
+			From  string `json:"from"`
+			To    string `json:"to"`
+			Value string `json:"value"`
+		} `json:"result"`
+		Error *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := c.rpc(ctx, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "eth_getTransactionByHash",
+		"params":  []any{transactionHash},
+	}, &txResponse); err != nil {
+		return false, false, err
+	}
+	if txResponse.Error != nil {
+		return false, false, fmt.Errorf("RPC transaction read failed: %s", txResponse.Error.Message)
+	}
+	if txResponse.Result == nil {
+		return false, true, nil
+	}
+	value, err := parseHexBigInt(txResponse.Result.Value)
+	if err != nil {
+		return false, false, err
+	}
+	return strings.EqualFold(txResponse.Result.From, from) &&
+		strings.EqualFold(txResponse.Result.To, to) &&
+		value.Cmp(minimum) >= 0, false, nil
+}
+
 func (c *Client) ERC20TransferInTransaction(ctx context.Context, tokenAddress string, transactionHash string, from string, to string, amountRaw string) (bool, bool, error) {
 	tokenAddress = strings.ToLower(strings.TrimSpace(tokenAddress))
 	transactionHash = strings.ToLower(strings.TrimSpace(transactionHash))

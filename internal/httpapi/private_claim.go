@@ -17,6 +17,7 @@ import (
 
 	"github.com/techbudol1/budol-api/internal/gmrengine"
 	"github.com/techbudol1/budol-api/internal/store"
+	"github.com/techbudol1/budol-api/internal/thirdweb"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -45,6 +46,12 @@ type PrivateClaimProofSubmissionRequest struct {
 	VK                       json.RawMessage `json:"vk"`
 }
 
+const (
+	privacyFeeHidePosition   = "hide_position"
+	privacyFeePrivateClaim   = "private_claim"
+	privacyFeeShieldedPayout = "shielded_payout"
+)
+
 type privateClaimScriptResponse struct {
 	Note store.PrivateClaimNote `json:"note"`
 	Tree struct {
@@ -70,6 +77,26 @@ func (s Server) pollPrivateClaimTree(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadGateway, err.Error())
 	}
 	return c.JSON(fiber.Map{"tree": tree})
+}
+
+func (s Server) privacyAccessConfig(c *fiber.Ctx) error {
+	return c.JSON(fiber.Map{
+		"chainId":          s.cfg.WelcomeTokenChainID,
+		"collectorAddress": strings.ToLower(strings.TrimSpace(s.cfg.ZENPrivacyAccessFeeCollectorAddress)),
+		"currency":         "tZEN",
+		"decimals":         18,
+		"mode":             "native",
+		"fees": fiber.Map{
+			privacyFeeHidePosition:   s.privacyFeeAmount(privacyFeeHidePosition),
+			privacyFeePrivateClaim:   s.privacyFeeAmount(privacyFeePrivateClaim),
+			privacyFeeShieldedPayout: s.privacyFeeAmount(privacyFeeShieldedPayout),
+		},
+		"limitations": []string{
+			"hide_position_fee is configured but not enforced until public profile/trade feeds exist",
+			"private claim fee is enforced before ZK proof submission",
+			"shielded payout fee is enforced before a shielded payout pool note is credited",
+		},
+	})
 }
 
 func (s Server) privateClaimArtifact(c *fiber.Ctx) error {
@@ -178,6 +205,11 @@ func (s Server) claimPrivatePayout(c *fiber.Ctx) error {
 			request.ShieldedNoteCommitments = []ShieldedNoteCommitmentInput{{Commitment: request.ShieldedNoteCommitment}}
 		} else {
 			return fiber.NewError(fiber.StatusBadRequest, "shieldedNoteCommitments are required for shielded payouts")
+		}
+	}
+	if shieldedPayout {
+		if err := s.verifyPrivacyAccessFee(c, user, request.PrivacyReceiptTxHash, privacyFeeShieldedPayout); err != nil {
+			return err
 		}
 	}
 	claim, reservedTrade, err := s.store.ReservePrivateClaim(c.Context(), user.ID, request.TradeID, trade.PrivateClaimLeaf, root, nullifierHash, request.ZKProofSubmissionID)
@@ -290,6 +322,9 @@ func (s Server) submitPrivateClaimProof(c *fiber.Ctx) error {
 	if s.gmrEngine == nil || !s.gmrEngine.Configured() {
 		return fiber.NewError(fiber.StatusBadGateway, "GMR Engine is not configured")
 	}
+	if err := s.verifyPrivacyAccessFee(c, user, request.PrivacyReceiptTxHash, privacyFeePrivateClaim); err != nil {
+		return err
+	}
 
 	trade, err := s.store.GetTradeByID(c.Context(), request.TradeID)
 	if err != nil || trade.UserID != user.ID {
@@ -339,6 +374,49 @@ func (s Server) submitPrivateClaimProof(c *fiber.Ctx) error {
 		"root":       root,
 		"submission": submission,
 	})
+}
+
+func (s Server) privacyFeeAmount(kind string) string {
+	switch kind {
+	case privacyFeeHidePosition:
+		return strings.TrimSpace(s.cfg.ZENHidePositionFee)
+	case privacyFeePrivateClaim:
+		return strings.TrimSpace(s.cfg.ZENPrivateClaimFee)
+	case privacyFeeShieldedPayout:
+		return strings.TrimSpace(s.cfg.ZENShieldedPayoutFee)
+	default:
+		return "0"
+	}
+}
+
+func (s Server) verifyPrivacyAccessFee(c *fiber.Ctx, user store.User, txHash string, kind string) error {
+	amount := s.privacyFeeAmount(kind)
+	value, ok := new(big.Int).SetString(strings.TrimSpace(amount), 10)
+	if !ok || value.Sign() < 0 {
+		return fiber.NewError(fiber.StatusInternalServerError, "privacy access fee is misconfigured")
+	}
+	if value.Sign() == 0 {
+		return nil
+	}
+	collector := strings.TrimSpace(s.cfg.ZENPrivacyAccessFeeCollectorAddress)
+	if !thirdweb.IsEVMAddress(collector) {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "privacy fee collector is not configured")
+	}
+	if !thirdweb.IsEVMAddress(user.WalletAddress) {
+		return fiber.NewError(fiber.StatusBadRequest, "user wallet address is invalid")
+	}
+	txHash = strings.TrimSpace(txHash)
+	if txHash == "" {
+		return fiber.NewError(fiber.StatusPaymentRequired, kind+" tZEN fee transaction is required")
+	}
+	found, err := s.evm.WaitForNativeTransfer(c.Context(), txHash, user.WalletAddress, collector, value.String())
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadGateway, "failed to verify "+kind+" tZEN fee: "+err.Error())
+	}
+	if !found {
+		return fiber.NewError(fiber.StatusPaymentRequired, kind+" tZEN fee was not found in the submitted transaction")
+	}
+	return nil
 }
 
 func (s Server) privateClaimProofContext(ctx context.Context, trade store.Trade, root string, nullifierHash string) (json.RawMessage, error) {

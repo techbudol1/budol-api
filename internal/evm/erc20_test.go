@@ -197,6 +197,51 @@ func TestERC20TransferInTransaction(t *testing.T) {
 	}
 }
 
+func TestNativeTransferInTransaction(t *testing.T) {
+	client := &Client{
+		rpcURL: "http://rpc.test",
+		httpClient: &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			var payload struct {
+				Method string `json:"method"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			response := `{"jsonrpc":"2.0","id":1,"result":null}`
+			switch payload.Method {
+			case "eth_getTransactionReceipt":
+				response = `{"jsonrpc":"2.0","id":1,"result":{"status":"0x1"}}`
+			case "eth_getTransactionByHash":
+				response = `{"jsonrpc":"2.0","id":1,"result":{
+					"from":"0x81d9b68eA5F8185a54b2e427770253Cc195B4892",
+					"to":"0xC6488D9Fb82C1cB112482643C62478D4D28bcB0E",
+					"value":"0xde0b6b3a7640000"
+				}}`
+			default:
+				t.Fatalf("unexpected method: %s", payload.Method)
+			}
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Header:     make(http.Header),
+				Body:       io.NopCloser(bytes.NewBufferString(response)),
+			}, nil
+		})},
+	}
+	found, pending, err := client.NativeTransferInTransaction(
+		context.Background(),
+		"0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		"0x81d9b68eA5F8185a54b2e427770253Cc195B4892",
+		"0xC6488D9Fb82C1cB112482643C62478D4D28bcB0E",
+		"1000000000000000000",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found || pending {
+		t.Fatalf("expected confirmed native transfer, found=%v pending=%v", found, pending)
+	}
+}
+
 func TestTransactionReceiptStatusConfirmed(t *testing.T) {
 	client := receiptStatusTestClient(t, `{"jsonrpc":"2.0","id":1,"result":{"status":"0x1"}}`)
 	status, err := client.TransactionReceiptStatus(context.Background(), "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
