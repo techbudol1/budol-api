@@ -91,6 +91,12 @@ type TradingFeeUpdateRequest struct {
 	TradingFeeBps int64 `json:"tradingFeeBps"`
 }
 
+type SponsorPolicyUpdateRequest struct {
+	MaxSponsoredTradesPerWalletDay int64  `json:"maxSponsoredTradesPerWalletDay"`
+	MaxSponsoredTradesGlobalDay    int64  `json:"maxSponsoredTradesGlobalDay"`
+	MinSponsorBalanceRaw           string `json:"minSponsorBalanceRaw"`
+}
+
 type TradeRequest struct {
 	PollID            string  `json:"pollId"`
 	Side              string  `json:"side"`
@@ -149,6 +155,8 @@ type SmartWalletConfig struct {
 
 const defaultTradingFeeBps int64 = 50
 
+const sponsorPolicySetting = "gas_free_sponsor_policy"
+
 var allowedTradeAmounts = map[float64]struct{}{
 	10:  {},
 	25:  {},
@@ -156,6 +164,12 @@ var allowedTradeAmounts = map[float64]struct{}{
 	100: {},
 	250: {},
 	500: {},
+}
+
+type SponsorPolicy struct {
+	MaxSponsoredTradesPerWalletDay int64  `json:"maxSponsoredTradesPerWalletDay"`
+	MaxSponsoredTradesGlobalDay    int64  `json:"maxSponsoredTradesGlobalDay"`
+	MinSponsorBalanceRaw           string `json:"minSponsorBalanceRaw"`
 }
 
 type CashoutRequest struct {
@@ -370,6 +384,7 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 	admin.Patch("/wallet/token-contract", adminMutationRateLimit, server.adminUpdateWalletTokenContract)
 	admin.Patch("/wallet/gas-free-trading", adminMutationRateLimit, server.adminUpdateGasFreeTrading)
 	admin.Patch("/wallet/trading-fee", adminMutationRateLimit, server.adminUpdateTradingFee)
+	admin.Patch("/wallet/sponsor-policy", adminMutationRateLimit, server.adminUpdateSponsorPolicy)
 	admin.Post("/wallet/transfer", adminMutationRateLimit, server.adminWalletTransfer)
 	admin.Post("/wallet/airdrop", adminMutationRateLimit, server.adminWalletAirdrop)
 	admin.Post("/wallet/burn", adminMutationRateLimit, server.adminWalletBurn)
@@ -1016,7 +1031,7 @@ func (s Server) createGaslessTradeEscrow(c *fiber.Ctx) error {
 	if s.gmrEngine == nil || !s.gmrEngine.Configured() {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "GMR Engine is not configured")
 	}
-	engineGasFreeEnabled, _ := s.engineGasFreeConfig(c.Context())
+	engineGasFreeEnabled, gaslessSpenderAddress := s.engineGasFreeConfig(c.Context())
 	if !engineGasFreeEnabled {
 		return fiber.NewError(fiber.StatusForbidden, "GMR Engine gas-free trading is disabled for this project")
 	}
@@ -1045,6 +1060,9 @@ func (s Server) createGaslessTradeEscrow(c *fiber.Ctx) error {
 	tradingFeeBps := s.engineTradingFeeBps(c.Context())
 	escrowTotal := tradeEscrowTotal(amount, tradingFeeBps)
 	if err := s.ensureTradingBalance(c, user, escrowTotal); err != nil {
+		return err
+	}
+	if err := s.enforceSponsorPolicy(c, owner, gaslessSpenderAddress); err != nil {
 		return err
 	}
 	if strings.TrimSpace(request.PollID) == "" {
@@ -1101,6 +1119,7 @@ func (s Server) createGaslessTradeEscrow(c *fiber.Ctx) error {
 	if txHash == "" {
 		return fiber.NewError(fiber.StatusBadGateway, "GMR Engine did not return an escrow transaction hash")
 	}
+	_ = s.store.CreateSponsoredEscrow(c.Context(), owner, request.PollID, side, amount, tradeFeeAmount(amount, tradingFeeBps), escrowTotal, txHash)
 	return c.JSON(fiber.Map{
 		"escrowTxHash":            txHash,
 		"escrowAmount":            escrowTotal,
@@ -1334,6 +1353,77 @@ func (s Server) engineTradingFeeBps(ctx context.Context) int64 {
 		return defaultTradingFeeBps
 	}
 	return normalizeTradingFeeBps(auth.App.TradingFeeBps)
+}
+
+func (s Server) sponsorPolicy(ctx context.Context) SponsorPolicy {
+	defaultPolicy := SponsorPolicy{
+		MaxSponsoredTradesPerWalletDay: 20,
+		MaxSponsoredTradesGlobalDay:    1000,
+		MinSponsorBalanceRaw:           "10000000000000000",
+	}
+	value, ok, err := s.store.GetSystemSetting(ctx, sponsorPolicySetting)
+	if err != nil || !ok || strings.TrimSpace(value) == "" {
+		return defaultPolicy
+	}
+	var policy SponsorPolicy
+	if err := json.Unmarshal([]byte(value), &policy); err != nil {
+		return defaultPolicy
+	}
+	return normalizeSponsorPolicy(policy)
+}
+
+func normalizeSponsorPolicy(policy SponsorPolicy) SponsorPolicy {
+	if policy.MaxSponsoredTradesPerWalletDay <= 0 {
+		policy.MaxSponsoredTradesPerWalletDay = 20
+	}
+	if policy.MaxSponsoredTradesPerWalletDay > 10000 {
+		policy.MaxSponsoredTradesPerWalletDay = 10000
+	}
+	if policy.MaxSponsoredTradesGlobalDay <= 0 {
+		policy.MaxSponsoredTradesGlobalDay = 1000
+	}
+	if policy.MaxSponsoredTradesGlobalDay > 1000000 {
+		policy.MaxSponsoredTradesGlobalDay = 1000000
+	}
+	if strings.TrimSpace(policy.MinSponsorBalanceRaw) == "" {
+		policy.MinSponsorBalanceRaw = "10000000000000000"
+	}
+	if _, ok := new(big.Int).SetString(strings.TrimSpace(policy.MinSponsorBalanceRaw), 10); !ok {
+		policy.MinSponsorBalanceRaw = "10000000000000000"
+	}
+	return policy
+}
+
+func (s Server) enforceSponsorPolicy(c *fiber.Ctx, owner string, sponsorAddress string) error {
+	policy := s.sponsorPolicy(c.Context())
+	since := time.Now().UTC().Truncate(24 * time.Hour).Format(time.RFC3339)
+	walletCount, err := s.store.CountSponsoredEscrows(c.Context(), owner, since)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadGateway, "failed to check wallet sponsor limits")
+	}
+	if walletCount >= policy.MaxSponsoredTradesPerWalletDay {
+		return fiber.NewError(fiber.StatusTooManyRequests, "daily gas-free trade limit reached for this wallet")
+	}
+	globalCount, err := s.store.CountGlobalSponsoredEscrows(c.Context(), since)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadGateway, "failed to check global sponsor limits")
+	}
+	if globalCount >= policy.MaxSponsoredTradesGlobalDay {
+		return fiber.NewError(fiber.StatusTooManyRequests, "daily gas-free trading limit reached")
+	}
+	if strings.TrimSpace(sponsorAddress) == "" {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "gas sponsor wallet is not configured")
+	}
+	balance, err := s.evm.NativeBalance(c.Context(), sponsorAddress)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadGateway, "failed to check sponsor balance")
+	}
+	minBalance, _ := new(big.Int).SetString(policy.MinSponsorBalanceRaw, 10)
+	currentBalance, ok := new(big.Int).SetString(balance.Raw, 10)
+	if !ok || currentBalance.Cmp(minBalance) < 0 {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "gas-free trading is paused because sponsor balance is below threshold")
+	}
+	return nil
 }
 
 func normalizeTradingFeeBps(value int64) int64 {
@@ -2481,6 +2571,7 @@ func (s Server) adminWalletConfig(c *fiber.Ctx) error {
 	}
 	gasFreeEnabled, gaslessSpenderAddress := s.engineGasFreeConfig(c.Context())
 	tradingFeeBps := s.engineTradingFeeBps(c.Context())
+	sponsorPolicy := s.sponsorPolicy(c.Context())
 	gasPayerBalance := ""
 	gasPayerBalanceRaw := ""
 	if gaslessSpenderAddress != "" {
@@ -2503,6 +2594,7 @@ func (s Server) adminWalletConfig(c *fiber.Ctx) error {
 				"bps":  tradingFeeBps,
 				"rate": float64(tradingFeeBps) / 10000,
 			},
+			"sponsorPolicy": sponsorPolicy,
 			"gasFreeTrading": fiber.Map{
 				"enabled":               gasFreeEnabled,
 				"scope":                 "self_custody_wallets",
@@ -2559,6 +2651,35 @@ func (s Server) adminUpdateTradingFee(c *fiber.Ctx) error {
 		TargetType: "wallet",
 		TargetID:   result.App.ID,
 		Detail:     "Trading fee set to " + strconv.FormatInt(result.App.TradingFeeBps, 10) + " bps.",
+		IPAddress:  c.IP(),
+		UserAgent:  c.Get("User-Agent"),
+	})
+	return s.adminWalletConfig(c)
+}
+
+func (s Server) adminUpdateSponsorPolicy(c *fiber.Ctx) error {
+	var request SponsorPolicyUpdateRequest
+	if err := c.BodyParser(&request); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
+	}
+	policy := normalizeSponsorPolicy(SponsorPolicy{
+		MaxSponsoredTradesPerWalletDay: request.MaxSponsoredTradesPerWalletDay,
+		MaxSponsoredTradesGlobalDay:    request.MaxSponsoredTradesGlobalDay,
+		MinSponsorBalanceRaw:           request.MinSponsorBalanceRaw,
+	})
+	payload, err := json.Marshal(policy)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to encode sponsor policy")
+	}
+	if err := s.store.SetSystemSetting(c.Context(), sponsorPolicySetting, string(payload)); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to update sponsor policy")
+	}
+	_, _ = s.store.CreateAdminActivity(c.Context(), store.AdminActivityInput{
+		Actor:      s.adminActor(c),
+		Action:     "update_sponsor_policy",
+		TargetType: "wallet",
+		TargetID:   "gas_free_sponsor_policy",
+		Detail:     "Gas-free sponsor limits updated.",
 		IPAddress:  c.IP(),
 		UserAgent:  c.Get("User-Agent"),
 	})

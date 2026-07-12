@@ -290,6 +290,9 @@ type AdminStore interface {
 	RecoverStaleShieldedWithdrawals(ctx context.Context, staleBefore time.Time, executeAfter time.Time, maxAttempts int64) (int64, error)
 	GetSystemSetting(ctx context.Context, key string) (string, bool, error)
 	SetSystemSetting(ctx context.Context, key string, value string) error
+	CountSponsoredEscrows(ctx context.Context, owner string, since string) (int64, error)
+	CountGlobalSponsoredEscrows(ctx context.Context, since string) (int64, error)
+	CreateSponsoredEscrow(ctx context.Context, owner string, pollID string, side string, amount float64, fee float64, total float64, txHash string) error
 	ListSettlementPayoutAttempts(ctx context.Context, pollID string) ([]SettlementPayoutAttempt, error)
 	ApplyMarketAutomation(ctx context.Context) (int64, error)
 	SeedDefaults(ctx context.Context, seedDemoPolls bool) error
