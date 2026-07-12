@@ -57,6 +57,7 @@ type AuthMeResult struct {
 		GasFreeEnabled bool   `json:"gasFreeEnabled"`
 		ID             string `json:"id"`
 		Name           string `json:"name"`
+		TradingFeeBps  int64  `json:"tradingFeeBps"`
 	} `json:"app"`
 }
 
@@ -65,6 +66,16 @@ type GasFreeSettingsResult struct {
 		GasFreeEnabled bool   `json:"gasFreeEnabled"`
 		ID             string `json:"id"`
 		Name           string `json:"name"`
+		TradingFeeBps  int64  `json:"tradingFeeBps"`
+	} `json:"app"`
+}
+
+type TradingFeeSettingsResult struct {
+	App struct {
+		GasFreeEnabled bool   `json:"gasFreeEnabled"`
+		ID             string `json:"id"`
+		Name           string `json:"name"`
+		TradingFeeBps  int64  `json:"tradingFeeBps"`
 	} `json:"app"`
 }
 
@@ -228,6 +239,39 @@ func (c *Client) UpdateGasFree(ctx context.Context, enabled bool) (GasFreeSettin
 	var result GasFreeSettingsResult
 	if err := json.Unmarshal(responseBody, &result); err != nil {
 		return GasFreeSettingsResult{}, fmt.Errorf("invalid GMR Engine gas-free response: %w", err)
+	}
+	return result, nil
+}
+
+func (c *Client) UpdateTradingFee(ctx context.Context, tradingFeeBps int64) (TradingFeeSettingsResult, error) {
+	if !c.Configured() {
+		return TradingFeeSettingsResult{}, errors.New("GMR Engine is not configured")
+	}
+	body, err := json.Marshal(map[string]any{"tradingFeeBps": tradingFeeBps})
+	if err != nil {
+		return TradingFeeSettingsResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, c.baseURL+"/v1/app/trading-fee", bytes.NewReader(body))
+	if err != nil {
+		return TradingFeeSettingsResult{}, err
+	}
+	c.setHeaders(req)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return TradingFeeSettingsResult{}, err
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return TradingFeeSettingsResult{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return TradingFeeSettingsResult{}, fmt.Errorf("GMR Engine trading-fee update failed: status %d: %s", resp.StatusCode, string(responseBody))
+	}
+	var result TradingFeeSettingsResult
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return TradingFeeSettingsResult{}, fmt.Errorf("invalid GMR Engine trading-fee response: %w", err)
 	}
 	return result, nil
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"math"
 	"math/big"
 	"net/url"
 	"sort"
@@ -86,6 +87,10 @@ type GasFreeTradingUpdateRequest struct {
 	Enabled bool `json:"enabled"`
 }
 
+type TradingFeeUpdateRequest struct {
+	TradingFeeBps int64 `json:"tradingFeeBps"`
+}
+
 type TradeRequest struct {
 	PollID            string  `json:"pollId"`
 	Side              string  `json:"side"`
@@ -125,6 +130,8 @@ type TradeConfig struct {
 	TokenDecimals              int              `json:"tokenDecimals"`
 	TokenSymbol                string           `json:"tokenSymbol"`
 	EscrowWalletAddress        string           `json:"escrowWalletAddress"`
+	TradingFeeBps              int64            `json:"tradingFeeBps"`
+	TradingFeeRate             float64          `json:"tradingFeeRate"`
 }
 
 type SmartWalletConfig struct {
@@ -138,6 +145,17 @@ type SmartWalletConfig struct {
 	BundlerURL        string `json:"bundlerUrl"`
 	AccountType       string `json:"accountType"`
 	Mode              string `json:"mode"`
+}
+
+const defaultTradingFeeBps int64 = 50
+
+var allowedTradeAmounts = map[float64]struct{}{
+	10:  {},
+	25:  {},
+	50:  {},
+	100: {},
+	250: {},
+	500: {},
 }
 
 type CashoutRequest struct {
@@ -351,6 +369,7 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 	admin.Get("/wallet", server.adminWalletConfig)
 	admin.Patch("/wallet/token-contract", adminMutationRateLimit, server.adminUpdateWalletTokenContract)
 	admin.Patch("/wallet/gas-free-trading", adminMutationRateLimit, server.adminUpdateGasFreeTrading)
+	admin.Patch("/wallet/trading-fee", adminMutationRateLimit, server.adminUpdateTradingFee)
 	admin.Post("/wallet/transfer", adminMutationRateLimit, server.adminWalletTransfer)
 	admin.Post("/wallet/airdrop", adminMutationRateLimit, server.adminWalletAirdrop)
 	admin.Post("/wallet/burn", adminMutationRateLimit, server.adminWalletBurn)
@@ -925,6 +944,9 @@ func (s Server) createTrade(c *fiber.Ctx) error {
 	if _, ok := fieldElement(request.PrivateClaimLeaf); !ok {
 		return fiber.NewError(fiber.StatusBadRequest, "privateClaimLeaf is required")
 	}
+	if err := validateFixedTradeAmount(request.Amount); err != nil {
+		return err
+	}
 	escrow, err := s.verifyTradeEscrow(c, user, request)
 	if err != nil {
 		return err
@@ -1017,7 +1039,12 @@ func (s Server) createGaslessTradeEscrow(c *fiber.Ctx) error {
 	if err != nil || amount <= 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "valid amount is required")
 	}
-	if err := s.ensureTradingBalance(c, user, amount); err != nil {
+	if err := validateFixedTradeAmount(amount); err != nil {
+		return err
+	}
+	tradingFeeBps := s.engineTradingFeeBps(c.Context())
+	escrowTotal := tradeEscrowTotal(amount, tradingFeeBps)
+	if err := s.ensureTradingBalance(c, user, escrowTotal); err != nil {
 		return err
 	}
 	if strings.TrimSpace(request.PollID) == "" {
@@ -1053,7 +1080,7 @@ func (s Server) createGaslessTradeEscrow(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadGateway, "failed to verify payout collateral")
 	}
 	result, err := s.gmrEngine.TransferERC20WithPermit(c.Context(), gmrengine.TransferWithPermitRequest{
-		Amount:          strings.TrimSpace(request.Amount),
+		Amount:          settlementAmountString(escrowTotal),
 		ChainID:         s.cfg.WelcomeTokenChainID,
 		ContractAddress: tokenContract,
 		Deadline:        strings.TrimSpace(request.Deadline),
@@ -1076,8 +1103,11 @@ func (s Server) createGaslessTradeEscrow(c *fiber.Ctx) error {
 	}
 	return c.JSON(fiber.Map{
 		"escrowTxHash":            txHash,
+		"escrowAmount":            escrowTotal,
 		"gasFree":                 true,
 		"permitTransactionHash":   result.PermitTransactionHash,
+		"tradingFee":              tradeFeeAmount(amount, tradingFeeBps),
+		"tradingFeeBps":           tradingFeeBps,
 		"transactionIds":          result.TransactionIDs,
 		"transferTransactionHash": result.TransferTransactionHash,
 	})
@@ -1103,7 +1133,12 @@ func (s Server) createManagedTradeEscrow(c *fiber.Ctx) error {
 	if err != nil || amount <= 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "valid amount is required")
 	}
-	if err := s.ensureTradingBalance(c, user, amount); err != nil {
+	if err := validateFixedTradeAmount(amount); err != nil {
+		return err
+	}
+	tradingFeeBps := s.engineTradingFeeBps(c.Context())
+	escrowTotal := tradeEscrowTotal(amount, tradingFeeBps)
+	if err := s.ensureTradingBalance(c, user, escrowTotal); err != nil {
 		return err
 	}
 	if strings.TrimSpace(request.PollID) == "" {
@@ -1138,7 +1173,7 @@ func (s Server) createManagedTradeEscrow(c *fiber.Ctx) error {
 
 	deadline := strconv.FormatInt(time.Now().UTC().Add(15*time.Minute).Unix(), 10)
 	result, err := s.gmrEngine.TransferManagedERC20WithPermit(c.Context(), gmrengine.TransferWithPermitRequest{
-		Amount:          strings.TrimSpace(request.Amount),
+		Amount:          settlementAmountString(escrowTotal),
 		ChainID:         s.cfg.WelcomeTokenChainID,
 		ContractAddress: tokenContract,
 		Deadline:        deadline,
@@ -1158,9 +1193,12 @@ func (s Server) createManagedTradeEscrow(c *fiber.Ctx) error {
 	}
 	return c.JSON(fiber.Map{
 		"escrowTxHash":            txHash,
+		"escrowAmount":            escrowTotal,
 		"gasFree":                 true,
 		"managed":                 true,
 		"permitTransactionHash":   result.PermitTransactionHash,
+		"tradingFee":              tradeFeeAmount(amount, tradingFeeBps),
+		"tradingFeeBps":           tradingFeeBps,
 		"transactionIds":          result.TransactionIDs,
 		"transferTransactionHash": result.TransferTransactionHash,
 	})
@@ -1170,6 +1208,9 @@ func (s Server) tradeQuote(c *fiber.Ctx) error {
 	amount, err := strconv.ParseFloat(c.Query("amount"), 64)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid amount")
+	}
+	if err := validateFixedTradeAmount(amount); err != nil {
+		return err
 	}
 	quote, err := s.store.QuoteTrade(c.Context(), store.TradeInput{
 		PollID: c.Query("pollId"),
@@ -1240,6 +1281,7 @@ func (s Server) tradeConfig(c *fiber.Ctx) error {
 	}
 
 	engineGasFreeEnabled, gaslessSpenderAddress := s.engineGasFreeConfig(c.Context())
+	tradingFeeBps := s.engineTradingFeeBps(c.Context())
 	gasPayerBalance := ""
 	gasPayerBalanceRaw := ""
 	if engineGasFreeEnabled && gaslessSpenderAddress != "" {
@@ -1262,6 +1304,8 @@ func (s Server) tradeConfig(c *fiber.Ctx) error {
 			TokenDecimals:              s.cfg.WelcomeTokenDecimals,
 			TokenSymbol:                s.cfg.WelcomeTokenSymbol,
 			EscrowWalletAddress:        projectWallet,
+			TradingFeeBps:              tradingFeeBps,
+			TradingFeeRate:             float64(tradingFeeBps) / 10000,
 		},
 	})
 }
@@ -1279,6 +1323,46 @@ func (s Server) engineGasFreeConfig(ctx context.Context) (bool, string) {
 		return false, ""
 	}
 	return true, wallet.Address
+}
+
+func (s Server) engineTradingFeeBps(ctx context.Context) int64 {
+	if s.gmrEngine == nil || !s.gmrEngine.Configured() {
+		return defaultTradingFeeBps
+	}
+	auth, err := s.gmrEngine.AuthMe(ctx)
+	if err != nil {
+		return defaultTradingFeeBps
+	}
+	return normalizeTradingFeeBps(auth.App.TradingFeeBps)
+}
+
+func normalizeTradingFeeBps(value int64) int64 {
+	if value < 0 {
+		return 0
+	}
+	if value > 1000 {
+		return 1000
+	}
+	return value
+}
+
+func tradeFeeAmount(amount float64, feeBps int64) float64 {
+	return roundTradeMoney(amount * float64(feeBps) / 10000)
+}
+
+func tradeEscrowTotal(amount float64, feeBps int64) float64 {
+	return roundTradeMoney(amount + tradeFeeAmount(amount, feeBps))
+}
+
+func roundTradeMoney(value float64) float64 {
+	return math.Round(value*100) / 100
+}
+
+func validateFixedTradeAmount(amount float64) error {
+	if _, ok := allowedTradeAmounts[roundTradeMoney(amount)]; !ok {
+		return fiber.NewError(fiber.StatusBadRequest, "choose one of the fixed BUDOL amounts: 10, 25, 50, 100, 250, 500")
+	}
+	return nil
 }
 
 func isDecimalString(value string) bool {
@@ -1397,7 +1481,9 @@ func (s Server) verifyTradeEscrow(c *fiber.Ctx, user store.User, request TradeRe
 	if txHash == "" {
 		return tradeEscrowVerification{}, fiber.NewError(fiber.StatusBadRequest, "escrow transaction hash is required")
 	}
-	quantity, err := thirdweb.TokenQuantity(settlementAmountString(request.Amount), s.cfg.WelcomeTokenDecimals)
+	tradingFeeBps := s.engineTradingFeeBps(c.Context())
+	escrowAmount := tradeEscrowTotal(request.Amount, tradingFeeBps)
+	quantity, err := thirdweb.TokenQuantity(settlementAmountString(escrowAmount), s.cfg.WelcomeTokenDecimals)
 	if err != nil {
 		return tradeEscrowVerification{}, fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
@@ -1417,7 +1503,7 @@ func (s Server) verifyTradeEscrow(c *fiber.Ctx, user store.User, request TradeRe
 		Status:     "verified",
 		From:       strings.ToLower(escrowFrom),
 		To:         projectWallet,
-		Amount:     request.Amount,
+		Amount:     escrowAmount,
 		VerifiedAt: time.Now().UTC().Format(time.RFC3339),
 	}, nil
 }
@@ -2394,6 +2480,7 @@ func (s Server) adminWalletConfig(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadGateway, "failed to load payout collateral")
 	}
 	gasFreeEnabled, gaslessSpenderAddress := s.engineGasFreeConfig(c.Context())
+	tradingFeeBps := s.engineTradingFeeBps(c.Context())
 	gasPayerBalance := ""
 	gasPayerBalanceRaw := ""
 	if gaslessSpenderAddress != "" {
@@ -2412,6 +2499,10 @@ func (s Server) adminWalletConfig(c *fiber.Ctx) error {
 			"projectWalletBalance": balance,
 			"burnAddress":          deadBurnAddress,
 			"collateral":           collateral,
+			"tradingFee": fiber.Map{
+				"bps":  tradingFeeBps,
+				"rate": float64(tradingFeeBps) / 10000,
+			},
 			"gasFreeTrading": fiber.Map{
 				"enabled":               gasFreeEnabled,
 				"scope":                 "self_custody_wallets",
@@ -2441,6 +2532,33 @@ func (s Server) adminUpdateGasFreeTrading(c *fiber.Ctx) error {
 		TargetType: "wallet",
 		TargetID:   result.App.ID,
 		Detail:     "Self-custody gas-free trading set to " + strconv.FormatBool(result.App.GasFreeEnabled) + ".",
+		IPAddress:  c.IP(),
+		UserAgent:  c.Get("User-Agent"),
+	})
+	return s.adminWalletConfig(c)
+}
+
+func (s Server) adminUpdateTradingFee(c *fiber.Ctx) error {
+	if s.gmrEngine == nil || !s.gmrEngine.Configured() {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "GMR Engine is not configured")
+	}
+	var request TradingFeeUpdateRequest
+	if err := c.BodyParser(&request); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
+	}
+	if request.TradingFeeBps < 0 || request.TradingFeeBps > 1000 {
+		return fiber.NewError(fiber.StatusBadRequest, "tradingFeeBps must be between 0 and 1000")
+	}
+	result, err := s.gmrEngine.UpdateTradingFee(c.Context(), request.TradingFeeBps)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadGateway, err.Error())
+	}
+	_, _ = s.store.CreateAdminActivity(c.Context(), store.AdminActivityInput{
+		Actor:      s.adminActor(c),
+		Action:     "update_trading_fee",
+		TargetType: "wallet",
+		TargetID:   result.App.ID,
+		Detail:     "Trading fee set to " + strconv.FormatInt(result.App.TradingFeeBps, 10) + " bps.",
 		IPAddress:  c.IP(),
 		UserAgent:  c.Get("User-Agent"),
 	})
