@@ -60,6 +60,14 @@ type AuthMeResult struct {
 	} `json:"app"`
 }
 
+type GasFreeSettingsResult struct {
+	App struct {
+		GasFreeEnabled bool   `json:"gasFreeEnabled"`
+		ID             string `json:"id"`
+		Name           string `json:"name"`
+	} `json:"app"`
+}
+
 type ProjectWallet struct {
 	Address        string `json:"address"`
 	IsDefaultAdmin bool   `json:"isDefaultAdmin"`
@@ -187,6 +195,39 @@ func (c *Client) AuthMe(ctx context.Context) (AuthMeResult, error) {
 	var result AuthMeResult
 	if err := json.Unmarshal(responseBody, &result); err != nil {
 		return AuthMeResult{}, fmt.Errorf("invalid GMR Engine auth response: %w", err)
+	}
+	return result, nil
+}
+
+func (c *Client) UpdateGasFree(ctx context.Context, enabled bool) (GasFreeSettingsResult, error) {
+	if !c.Configured() {
+		return GasFreeSettingsResult{}, errors.New("GMR Engine is not configured")
+	}
+	body, err := json.Marshal(map[string]any{"gasFreeEnabled": enabled})
+	if err != nil {
+		return GasFreeSettingsResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, c.baseURL+"/v1/app/gas-free", bytes.NewReader(body))
+	if err != nil {
+		return GasFreeSettingsResult{}, err
+	}
+	c.setHeaders(req)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return GasFreeSettingsResult{}, err
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return GasFreeSettingsResult{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return GasFreeSettingsResult{}, fmt.Errorf("GMR Engine gas-free update failed: status %d: %s", resp.StatusCode, string(responseBody))
+	}
+	var result GasFreeSettingsResult
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return GasFreeSettingsResult{}, fmt.Errorf("invalid GMR Engine gas-free response: %w", err)
 	}
 	return result, nil
 }

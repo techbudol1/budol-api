@@ -82,6 +82,10 @@ type TokenContractUpdateRequest struct {
 	TokenAddress string `json:"tokenAddress"`
 }
 
+type GasFreeTradingUpdateRequest struct {
+	Enabled bool `json:"enabled"`
+}
+
 type TradeRequest struct {
 	PollID            string  `json:"pollId"`
 	Side              string  `json:"side"`
@@ -346,6 +350,7 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 	admin.Post("/shielded-withdrawals/queue/resume", adminMutationRateLimit, server.adminResumeShieldedWithdrawalQueue)
 	admin.Get("/wallet", server.adminWalletConfig)
 	admin.Patch("/wallet/token-contract", adminMutationRateLimit, server.adminUpdateWalletTokenContract)
+	admin.Patch("/wallet/gas-free-trading", adminMutationRateLimit, server.adminUpdateGasFreeTrading)
 	admin.Post("/wallet/transfer", adminMutationRateLimit, server.adminWalletTransfer)
 	admin.Post("/wallet/airdrop", adminMutationRateLimit, server.adminWalletAirdrop)
 	admin.Post("/wallet/burn", adminMutationRateLimit, server.adminWalletBurn)
@@ -1262,9 +1267,6 @@ func (s Server) tradeConfig(c *fiber.Ctx) error {
 }
 
 func (s Server) engineGasFreeConfig(ctx context.Context) (bool, string) {
-	if s.cfg.WelcomeTokenChainID != 421614 {
-		return false, ""
-	}
 	if s.gmrEngine == nil || !s.gmrEngine.Configured() {
 		return false, ""
 	}
@@ -2360,7 +2362,7 @@ func (s Server) adminSettlementPreview(c *fiber.Ctx) error {
 		"settlement": preview,
 		"wallet": fiber.Map{
 			"chainId":              s.cfg.WelcomeTokenChainID,
-			"chainName":            "Arbitrum Sepolia",
+			"chainName":            networkName(s.cfg.WelcomeTokenChainID),
 			"tokenAddress":         s.activeTokenContract(c.Context()),
 			"projectWallet":        projectWallet,
 			"projectWalletBalance": balance,
@@ -2391,18 +2393,58 @@ func (s Server) adminWalletConfig(c *fiber.Ctx) error {
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadGateway, "failed to load payout collateral")
 	}
+	gasFreeEnabled, gaslessSpenderAddress := s.engineGasFreeConfig(c.Context())
+	gasPayerBalance := ""
+	gasPayerBalanceRaw := ""
+	if gaslessSpenderAddress != "" {
+		if balance, err := s.evm.NativeBalance(c.Context(), gaslessSpenderAddress); err == nil {
+			gasPayerBalance = balance.Formatted
+			gasPayerBalanceRaw = balance.Raw
+		}
+	}
 	return c.JSON(fiber.Map{
 		"wallet": fiber.Map{
 			"chainId":              s.cfg.WelcomeTokenChainID,
-			"chainName":            "Arbitrum Sepolia",
+			"chainName":            networkName(s.cfg.WelcomeTokenChainID),
 			"tokenAddress":         tokenContract,
 			"tokenDecimals":        s.cfg.WelcomeTokenDecimals,
 			"projectWallet":        projectWallet,
 			"projectWalletBalance": balance,
 			"burnAddress":          deadBurnAddress,
 			"collateral":           collateral,
+			"gasFreeTrading": fiber.Map{
+				"enabled":               gasFreeEnabled,
+				"scope":                 "self_custody_wallets",
+				"gaslessSpenderAddress": strings.ToLower(gaslessSpenderAddress),
+				"gasPayerBalance":       gasPayerBalance,
+				"gasPayerBalanceRaw":    gasPayerBalanceRaw,
+			},
 		},
 	})
+}
+
+func (s Server) adminUpdateGasFreeTrading(c *fiber.Ctx) error {
+	if s.gmrEngine == nil || !s.gmrEngine.Configured() {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "GMR Engine is not configured")
+	}
+	var request GasFreeTradingUpdateRequest
+	if err := c.BodyParser(&request); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
+	}
+	result, err := s.gmrEngine.UpdateGasFree(c.Context(), request.Enabled)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadGateway, err.Error())
+	}
+	_, _ = s.store.CreateAdminActivity(c.Context(), store.AdminActivityInput{
+		Actor:      s.adminActor(c),
+		Action:     "update_gas_free_trading",
+		TargetType: "wallet",
+		TargetID:   result.App.ID,
+		Detail:     "Self-custody gas-free trading set to " + strconv.FormatBool(result.App.GasFreeEnabled) + ".",
+		IPAddress:  c.IP(),
+		UserAgent:  c.Get("User-Agent"),
+	})
+	return s.adminWalletConfig(c)
 }
 
 func (s Server) adminUpdateWalletTokenContract(c *fiber.Ctx) error {
