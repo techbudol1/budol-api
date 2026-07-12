@@ -1089,10 +1089,6 @@ func (s Server) createManagedTradeEscrow(c *fiber.Ctx) error {
 	if s.gmrEngine == nil || !s.gmrEngine.Configured() {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "GMR Engine is not configured")
 	}
-	engineGasFreeEnabled, _ := s.engineGasFreeConfig(c.Context())
-	if !engineGasFreeEnabled {
-		return fiber.NewError(fiber.StatusForbidden, "GMR Engine gas-free trading is disabled for this project")
-	}
 
 	var request ManagedEscrowRequest
 	if err := c.BodyParser(&request); err != nil {
