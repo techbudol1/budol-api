@@ -18,6 +18,8 @@ import (
 const balanceOfSelector = "70a08231"
 const simpleAccountGetAddressSelector = "8cb84e18"
 const transferTopic = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+const transferHistoryLookbackBlocks uint64 = 1000000
+const transferHistoryChunkBlocks uint64 = 25000
 
 var evmAddressPattern = regexp.MustCompile(`^0x[0-9a-fA-F]{40}$`)
 
@@ -574,14 +576,70 @@ func (c *Client) transferLogs(ctx context.Context, tokenAddress string, walletAd
 		topics[2] = walletTopic
 	}
 
+	transfers, err := c.transferLogsRange(ctx, tokenAddress, decimals, topics, direction, "0x0", "latest")
+	if err == nil && len(transfers) > 0 {
+		return transfers, nil
+	}
+	chunkedTransfers, chunkedErr := c.transferLogsChunked(ctx, tokenAddress, decimals, topics, direction)
+	if chunkedErr == nil {
+		return chunkedTransfers, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return nil, chunkedErr
+}
+
+func (c *Client) transferLogsChunked(ctx context.Context, tokenAddress string, decimals int, topics []any, direction string) ([]TokenTransfer, error) {
+	latest, err := c.latestBlockNumber(ctx)
+	if err != nil {
+		return nil, err
+	}
+	from := uint64(0)
+	if latest > transferHistoryLookbackBlocks {
+		from = latest - transferHistoryLookbackBlocks
+	}
+	transfersByKey := map[string]TokenTransfer{}
+	for start := from; start <= latest; {
+		end := start + transferHistoryChunkBlocks - 1
+		if end > latest {
+			end = latest
+		}
+		chunk, err := c.transferLogsRange(ctx, tokenAddress, decimals, topics, direction, fmt.Sprintf("0x%x", start), fmt.Sprintf("0x%x", end))
+		if err != nil {
+			return nil, err
+		}
+		for _, transfer := range chunk {
+			key := transfer.TransactionHash + ":" + fmt.Sprint(transfer.LogIndex)
+			transfersByKey[key] = transfer
+		}
+		if end == latest {
+			break
+		}
+		start = end + 1
+	}
+	transfers := make([]TokenTransfer, 0, len(transfersByKey))
+	for _, transfer := range transfersByKey {
+		transfers = append(transfers, transfer)
+	}
+	sort.Slice(transfers, func(i int, j int) bool {
+		if transfers[i].BlockNumber == transfers[j].BlockNumber {
+			return transfers[i].LogIndex > transfers[j].LogIndex
+		}
+		return transfers[i].BlockNumber > transfers[j].BlockNumber
+	})
+	return transfers, nil
+}
+
+func (c *Client) transferLogsRange(ctx context.Context, tokenAddress string, decimals int, topics []any, direction string, fromBlock string, toBlock string) ([]TokenTransfer, error) {
 	payload := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
 		"method":  "eth_getLogs",
 		"params": []any{
 			map[string]any{
-				"fromBlock": "0x0",
-				"toBlock":   "latest",
+				"fromBlock": fromBlock,
+				"toBlock":   toBlock,
 				"address":   tokenAddress,
 				"topics":    topics,
 			},
@@ -633,6 +691,27 @@ func (c *Client) transferLogs(ctx context.Context, tokenAddress string, walletAd
 		})
 	}
 	return transfers, nil
+}
+
+func (c *Client) latestBlockNumber(ctx context.Context) (uint64, error) {
+	var rpcResponse struct {
+		Result string `json:"result"`
+		Error  *struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := c.rpc(ctx, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "eth_blockNumber",
+		"params":  []any{},
+	}, &rpcResponse); err != nil {
+		return 0, err
+	}
+	if rpcResponse.Error != nil {
+		return 0, fmt.Errorf("RPC block number failed: %s", rpcResponse.Error.Message)
+	}
+	return parseHexUint(rpcResponse.Result)
 }
 
 func (c *Client) alchemyAssetTransfers(ctx context.Context, tokenAddress string, walletAddress string, decimals int, direction string) ([]TokenTransfer, error) {
