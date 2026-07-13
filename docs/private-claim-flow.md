@@ -132,3 +132,18 @@ BudolPH calls GMR Engine to broadcast a native tZEN transfer from the managed us
 - Self-custody users pay privacy tZEN fees from the browser. Managed Google wallets pay through GMR Engine Vault. Both paths require the paying wallet to have enough native tZEN for the fee and gas.
 - Shielded payouts only work when the payout amount can be exactly split across configured pool denominations. Unsupported amounts use direct fallback only if `SHIELDED_PAYOUT_DIRECT_FALLBACK=true`.
 - The checked-in ZK artifacts are development artifacts unless replaced with audited ceremony outputs and checksums before production.
+
+## Planned User Privacy Controls
+
+Add a clear privacy control to the trade ticket before order confirmation:
+
+- Default: public position and normal trade history.
+- Toggle: `Private position`
+  - Intended behavior: hide this trade/position from future public profile and public trade-history surfaces until market resolution.
+  - Fee: `ZEN_HIDE_POSITION_FEE`.
+  - Current blocker: BudolPH does not yet publish public user profiles or public trade-history pages, so there is nothing user-facing to hide yet.
+- Toggle or claim-time option: `Shielded payout`
+  - Intended behavior: if the trade wins, use the shielded payout note flow instead of a direct public payout where supported by configured denominations.
+  - Fee: `ZEN_SHIELDED_PAYOUT_FEE`.
+
+MVP sequencing: build the public profile/trade-history visibility model first, then expose the `Private position` toggle in the trade card. Until then, do not show a fake toggle that has no observable effect.
