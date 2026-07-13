@@ -1312,6 +1312,7 @@ func (s Server) smartWalletConfig(c *fiber.Ctx) error {
 }
 
 func (s Server) tradeConfig(c *fiber.Ctx) error {
+	c.Set("Cache-Control", "no-store")
 	tokenContract := s.activeTokenContract(c.Context())
 	if strings.TrimSpace(tokenContract) == "" {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "BUDOL token contract is not configured")
@@ -1782,6 +1783,7 @@ func (s Server) removeWatchlist(c *fiber.Ctx) error {
 }
 
 func (s Server) walletBalance(c *fiber.Ctx) error {
+	c.Set("Cache-Control", "no-store")
 	user, err := s.authenticatedUser(c)
 	if err != nil {
 		return err
@@ -1882,6 +1884,7 @@ func zeroWalletBalance(kind string, label string, symbol string, walletAddress s
 }
 
 func (s Server) walletHistory(c *fiber.Ctx) error {
+	c.Set("Cache-Control", "no-store")
 	user, err := s.authenticatedUser(c)
 	if err != nil {
 		return err
