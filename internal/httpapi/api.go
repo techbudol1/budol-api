@@ -325,6 +325,7 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 	api.Post("/cashouts", server.cashoutPosition)
 	api.Get("/private-claims/shielded-config", server.privateClaimShieldedPayoutConfig)
 	api.Get("/privacy-access/config", server.privacyAccessConfig)
+	api.Post("/privacy-access/managed-fee", tradeRateLimit, server.createManagedPrivacyAccessFee)
 	api.Post("/private-claims/shielded-withdrawal-proofs", tradeRateLimit, server.submitShieldedWithdrawalProof)
 	api.Get("/private-claims/shielded-withdrawals", server.listShieldedWithdrawals)
 	api.Post("/private-claims/shielded-withdrawals", tradeRateLimit, server.withdrawShieldedPayout)

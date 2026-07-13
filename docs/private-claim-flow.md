@@ -117,10 +117,18 @@ The public config endpoint is:
 GET /api/privacy-access/config
 ```
 
+Managed Google wallets pay the same native tZEN fees through GMR Engine Vault:
+
+```text
+POST /api/privacy-access/managed-fee
+```
+
+BudolPH calls GMR Engine to broadcast a native tZEN transfer from the managed user wallet to the configured collector, then verifies the resulting transaction hash exactly like a self-custody payment.
+
 ## Current MVP Limitations
 
 - Hide-position is a planned paid privacy tier, but there is no public profile/trade-history surface to hide from yet. Until that exists, all trade notes are private-note capable by default and hide-position fee collection is not triggered.
 - Browser claim notes are still critical. If the user loses the browser note and has no encrypted backup, they cannot generate the private claim or shielded withdrawal proof.
-- Self-custody users can pay privacy tZEN fees from the browser. Managed Google/smart-wallet users need a separate sponsored/native-fee path before paid privacy actions are smooth for them.
+- Self-custody users pay privacy tZEN fees from the browser. Managed Google wallets pay through GMR Engine Vault. Both paths require the paying wallet to have enough native tZEN for the fee and gas.
 - Shielded payouts only work when the payout amount can be exactly split across configured pool denominations. Unsupported amounts use direct fallback only if `SHIELDED_PAYOUT_DIRECT_FALLBACK=true`.
 - The checked-in ZK artifacts are development artifacts unless replaced with audited ceremony outputs and checksums before production.

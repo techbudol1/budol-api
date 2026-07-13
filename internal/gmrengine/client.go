@@ -40,6 +40,19 @@ type TransferWithPermitRequest struct {
 	V               int
 }
 
+type ManagedNativeTransferRequest struct {
+	AmountRaw string
+	ChainID   int
+	Owner     string
+	Recipient string
+}
+
+type ManagedNativeTransferResult struct {
+	TransactionHash string   `json:"transactionHash"`
+	TransactionIDs  []string `json:"transactionIds"`
+	RawJSON         string   `json:"-"`
+}
+
 type TransferResult struct {
 	TransactionIDs []string `json:"transactionIds"`
 	RawJSON        string   `json:"-"`
@@ -508,6 +521,46 @@ func (c *Client) TransferManagedERC20WithPermit(ctx context.Context, request Tra
 	var result TransferWithPermitResult
 	if err := json.Unmarshal(responseBody, &result); err != nil {
 		return TransferWithPermitResult{}, fmt.Errorf("invalid GMR Engine managed transfer response: %w", err)
+	}
+	result.RawJSON = string(responseBody)
+	return result, nil
+}
+
+func (c *Client) TransferManagedNative(ctx context.Context, request ManagedNativeTransferRequest) (ManagedNativeTransferResult, error) {
+	if !c.Configured() {
+		return ManagedNativeTransferResult{}, errors.New("GMR Engine is not configured")
+	}
+	payload := map[string]any{
+		"amountRaw": strings.TrimSpace(request.AmountRaw),
+		"chainId":   request.ChainID,
+		"owner":     strings.TrimSpace(request.Owner),
+		"recipient": strings.TrimSpace(request.Recipient),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return ManagedNativeTransferResult{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/native/managed-transfer", bytes.NewReader(body))
+	if err != nil {
+		return ManagedNativeTransferResult{}, err
+	}
+	c.setHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return ManagedNativeTransferResult{}, err
+	}
+	defer resp.Body.Close()
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return ManagedNativeTransferResult{}, err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ManagedNativeTransferResult{}, fmt.Errorf("GMR Engine managed native transfer failed: status %d: %s", resp.StatusCode, string(responseBody))
+	}
+	var result ManagedNativeTransferResult
+	if err := json.Unmarshal(responseBody, &result); err != nil {
+		return ManagedNativeTransferResult{}, fmt.Errorf("invalid GMR Engine managed native transfer response: %w", err)
 	}
 	result.RawJSON = string(responseBody)
 	return result, nil

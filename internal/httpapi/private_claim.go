@@ -46,6 +46,10 @@ type PrivateClaimProofSubmissionRequest struct {
 	VK                       json.RawMessage `json:"vk"`
 }
 
+type ManagedPrivacyFeeRequest struct {
+	Kind string `json:"kind"`
+}
+
 const (
 	privacyFeeHidePosition   = "hide_position"
 	privacyFeePrivateClaim   = "private_claim"
@@ -96,6 +100,68 @@ func (s Server) privacyAccessConfig(c *fiber.Ctx) error {
 			"private claim fee is enforced before ZK proof submission",
 			"shielded payout fee is enforced before a shielded payout pool note is credited",
 		},
+	})
+}
+
+func (s Server) createManagedPrivacyAccessFee(c *fiber.Ctx) error {
+	user, err := s.authenticatedUser(c)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(strings.TrimSpace(user.WalletCustody), "managed") {
+		return fiber.NewError(fiber.StatusForbidden, "managed privacy fee is only available for managed wallets")
+	}
+	if s.gmrEngine == nil || !s.gmrEngine.Configured() {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "GMR Engine is not configured")
+	}
+	var request ManagedPrivacyFeeRequest
+	if err := c.BodyParser(&request); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
+	}
+	kind := strings.TrimSpace(request.Kind)
+	if kind != privacyFeePrivateClaim && kind != privacyFeeShieldedPayout && kind != privacyFeeHidePosition {
+		return fiber.NewError(fiber.StatusBadRequest, "valid privacy fee kind is required")
+	}
+	amountRaw := s.privacyFeeAmount(kind)
+	amount, ok := new(big.Int).SetString(strings.TrimSpace(amountRaw), 10)
+	if !ok || amount.Sign() < 0 {
+		return fiber.NewError(fiber.StatusInternalServerError, "privacy access fee is misconfigured")
+	}
+	if amount.Sign() == 0 {
+		return c.JSON(fiber.Map{"amountRaw": amountRaw, "kind": kind, "skipped": true, "transactionHash": ""})
+	}
+	collector := strings.TrimSpace(s.cfg.ZENPrivacyAccessFeeCollectorAddress)
+	if !thirdweb.IsEVMAddress(collector) {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "privacy fee collector is not configured")
+	}
+	result, err := s.gmrEngine.TransferManagedNative(c.Context(), gmrengine.ManagedNativeTransferRequest{
+		AmountRaw: amount.String(),
+		ChainID:   s.cfg.WelcomeTokenChainID,
+		Owner:     user.WalletAddress,
+		Recipient: collector,
+	})
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadGateway, err.Error())
+	}
+	txHash := strings.TrimSpace(result.TransactionHash)
+	if txHash == "" && len(result.TransactionIDs) > 0 {
+		txHash = strings.TrimSpace(result.TransactionIDs[len(result.TransactionIDs)-1])
+	}
+	if txHash == "" {
+		return fiber.NewError(fiber.StatusBadGateway, "GMR Engine did not return a managed privacy fee transaction hash")
+	}
+	if err := s.verifyPrivacyAccessFee(c, user, txHash, kind); err != nil {
+		return err
+	}
+	_, _ = s.store.CreateNotification(c.Context(), user.ID, "privacy_fee", "Privacy fee paid", "Paid tZEN for "+strings.ReplaceAll(kind, "_", " ")+".", "/portfolio")
+	return c.JSON(fiber.Map{
+		"amountRaw":        amount.String(),
+		"collectorAddress": strings.ToLower(collector),
+		"currency":         "tZEN",
+		"kind":             kind,
+		"managed":          true,
+		"transactionHash":  txHash,
+		"transactionIds":   result.TransactionIDs,
 	})
 }
 
