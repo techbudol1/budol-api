@@ -32,16 +32,27 @@ import (
 )
 
 type Server struct {
-	cfg           config.Config
-	collateralMu  *sync.Mutex
-	engineLimiter *engineRateLimiter
-	evm           *evm.Client
-	gmrEngine     *gmrengine.Client
-	newsAgent     *newsagent.Agent
-	privy         *privy.Client
-	store         store.AdminStore
-	thirdweb      *thirdweb.Client
-	sessions      session.Manager
+	cfg                  config.Config
+	collateralMu         *sync.Mutex
+	engineLimiter        *engineRateLimiter
+	evm                  *evm.Client
+	gmrEngine            *gmrengine.Client
+	newsAgent            *newsagent.Agent
+	privy                *privy.Client
+	store                store.AdminStore
+	thirdweb             *thirdweb.Client
+	sessions             session.Manager
+	walletBalanceCache   map[string]walletBalanceCacheEntry
+	walletBalanceCacheMu *sync.Mutex
+}
+
+const walletBalanceCacheTTL = 10 * time.Second
+
+type walletBalanceCacheEntry struct {
+	Balance  fiber.Map
+	Balances []fiber.Map
+	Warning  string
+	Expires  time.Time
 }
 
 type ThirdwebLoginRequest struct {
@@ -246,16 +257,18 @@ const budolTokenContractSetting = "budol_token_contract"
 
 func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb.Client, gmrEngineClient *gmrengine.Client, newsAgent *newsagent.Agent, sessions session.Manager) *fiber.App {
 	server := Server{
-		cfg:           cfg,
-		collateralMu:  &sync.Mutex{},
-		engineLimiter: newEngineRateLimiter(),
-		evm:           evm.NewClient(cfg.WelcomeTokenRPCURL),
-		gmrEngine:     gmrEngineClient,
-		newsAgent:     newsAgent,
-		privy:         privy.NewClient(cfg.PrivyAPIBase, cfg.PrivyAppID, cfg.PrivyAppSecret, cfg.PrivyVerificationKey),
-		store:         userStore,
-		thirdweb:      thirdwebClient,
-		sessions:      sessions,
+		cfg:                  cfg,
+		collateralMu:         &sync.Mutex{},
+		engineLimiter:        newEngineRateLimiter(),
+		evm:                  evm.NewClient(cfg.WelcomeTokenRPCURL),
+		gmrEngine:            gmrEngineClient,
+		newsAgent:            newsAgent,
+		privy:                privy.NewClient(cfg.PrivyAPIBase, cfg.PrivyAppID, cfg.PrivyAppSecret, cfg.PrivyVerificationKey),
+		store:                userStore,
+		thirdweb:             thirdwebClient,
+		sessions:             sessions,
+		walletBalanceCache:   map[string]walletBalanceCacheEntry{},
+		walletBalanceCacheMu: &sync.Mutex{},
 	}
 
 	app := fiber.New(fiber.Config{
@@ -1789,70 +1802,192 @@ func (s Server) walletBalance(c *fiber.Ctx) error {
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	balances := []fiber.Map{}
+	privacyToken := strings.ToLower(strings.TrimSpace("0xb06EC4ce262D8dbDc24Fac87479A49A7DC4cFb87"))
+	tokenContract := s.activeTokenContract(c.Context())
+	cacheKey := walletBalanceCacheKey(user.WalletAddress, tokenContract, privacyToken)
+	if !truthyQuery(c.Query("refresh")) {
+		if cached, ok := s.cachedWalletBalance(cacheKey); ok {
+			return c.JSON(cached)
+		}
+	}
 
-	if nativeBalance, err := s.evm.NativeBalance(c.Context(), user.WalletAddress); err == nil {
+	type nativeResult struct {
+		balance evm.NativeBalance
+		err     error
+	}
+	type tokenResult struct {
+		balance evm.TokenBalance
+		err     error
+	}
+
+	var wg sync.WaitGroup
+	nativeCh := make(chan nativeResult, 1)
+	privacyCh := make(chan tokenResult, 1)
+	budolCh := make(chan tokenResult, 1)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		balance, err := s.evm.NativeBalance(c.Context(), user.WalletAddress)
+		nativeCh <- nativeResult{balance: balance, err: err}
+	}()
+
+	if thirdweb.IsEVMAddress(privacyToken) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			balance, err := s.evm.ERC20Balance(c.Context(), privacyToken, user.WalletAddress, 18)
+			privacyCh <- tokenResult{balance: balance, err: err}
+		}()
+	} else {
+		close(privacyCh)
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		balance, err := s.evm.ERC20Balance(c.Context(), tokenContract, user.WalletAddress, s.cfg.WelcomeTokenDecimals)
+		if err != nil && s.gmrEngine != nil && s.gmrEngine.Configured() {
+			engineBalance, engineErr := s.gmrEngine.ERC20Balance(c.Context(), s.cfg.WelcomeTokenChainID, tokenContract, user.WalletAddress)
+			if engineErr == nil {
+				balance = evm.TokenBalance{
+					Raw:           engineBalance.OwnedBalanceRaw,
+					Formatted:     engineBalance.OwnedBalance,
+					Decimals:      int(engineBalance.Decimals),
+					WalletAddress: engineBalance.WalletAddress,
+					TokenAddress:  engineBalance.ContractAddress,
+					FetchedAt:     now,
+				}
+				err = nil
+			}
+		}
+		budolCh <- tokenResult{balance: balance, err: err}
+	}()
+
+	wg.Wait()
+	close(nativeCh)
+	close(budolCh)
+	if thirdweb.IsEVMAddress(privacyToken) {
+		close(privacyCh)
+	}
+
+	balances := []fiber.Map{}
+	native := <-nativeCh
+	if native.err == nil {
 		balances = append(balances, fiber.Map{
-			"raw":           nativeBalance.Raw,
-			"formatted":     nativeBalance.Formatted,
-			"decimals":      nativeBalance.Decimals,
+			"raw":           native.balance.Raw,
+			"formatted":     native.balance.Formatted,
+			"decimals":      native.balance.Decimals,
 			"kind":          "native",
 			"label":         "Gas token",
 			"symbol":        "ETH",
-			"walletAddress": nativeBalance.WalletAddress,
-			"fetchedAt":     nativeBalance.FetchedAt,
+			"walletAddress": native.balance.WalletAddress,
+			"fetchedAt":     native.balance.FetchedAt,
 		})
 	} else {
 		balances = append(balances, zeroWalletBalance("native", "Gas token", "ETH", user.WalletAddress, "", 18, now))
 	}
-
-	privacyToken := strings.ToLower(strings.TrimSpace("0xb06EC4ce262D8dbDc24Fac87479A49A7DC4cFb87"))
-	if thirdweb.IsEVMAddress(privacyToken) {
-		if balance, err := s.evm.ERC20Balance(c.Context(), privacyToken, user.WalletAddress, 18); err == nil {
-			balances = append(balances, walletTokenBalanceMap(balance, "Privacy token", "tZEN"))
+	if privacy, ok := <-privacyCh; ok {
+		if privacy.err == nil {
+			balances = append(balances, walletTokenBalanceMap(privacy.balance, "Privacy token", "tZEN"))
 		} else {
 			balances = append(balances, zeroWalletBalance("erc20", "Privacy token", "tZEN", user.WalletAddress, privacyToken, 18, now))
 		}
 	}
-
-	tokenContract := s.activeTokenContract(c.Context())
-	balance, err := s.evm.ERC20Balance(c.Context(), tokenContract, user.WalletAddress, s.cfg.WelcomeTokenDecimals)
-	if err != nil && s.gmrEngine != nil && s.gmrEngine.Configured() {
-		engineBalance, engineErr := s.gmrEngine.ERC20Balance(c.Context(), s.cfg.WelcomeTokenChainID, tokenContract, user.WalletAddress)
-		if engineErr == nil {
-			budolBalance := fiber.Map{
-				"raw":           engineBalance.OwnedBalanceRaw,
-				"formatted":     engineBalance.OwnedBalance,
-				"decimals":      engineBalance.Decimals,
-				"kind":          "erc20",
-				"label":         "Trading token",
-				"symbol":        "BUDOL",
-				"walletAddress": engineBalance.WalletAddress,
-				"tokenAddress":  engineBalance.ContractAddress,
-				"fetchedAt":     now,
-			}
-			balances = append(balances, budolBalance)
-			return c.JSON(fiber.Map{
-				"balance":  budolBalance,
-				"balances": balances,
-			})
-		}
+	budol := <-budolCh
+	warning := ""
+	budolBalance := fiber.Map{}
+	if budol.err == nil {
+		budolBalance = walletTokenBalanceMap(budol.balance, "Trading token", "BUDOL")
+	} else {
+		budolBalance = zeroWalletBalance("erc20", "Trading token", "BUDOL", user.WalletAddress, tokenContract, s.cfg.WelcomeTokenDecimals, now)
+		warning = "BUDOL balance is temporarily unavailable"
 	}
-	if err != nil {
-		budolBalance := zeroWalletBalance("erc20", "Trading token", "BUDOL", user.WalletAddress, tokenContract, s.cfg.WelcomeTokenDecimals, now)
-		balances = append(balances, budolBalance)
-		return c.JSON(fiber.Map{
-			"balance":  budolBalance,
-			"balances": balances,
-			"warning":  "BUDOL balance is temporarily unavailable",
-		})
-	}
-	budolBalance := walletTokenBalanceMap(balance, "Trading token", "BUDOL")
 	balances = append(balances, budolBalance)
-	return c.JSON(fiber.Map{
+	response := fiber.Map{
 		"balance":  budolBalance,
 		"balances": balances,
-	})
+		"cached":   false,
+	}
+	if warning != "" {
+		response["warning"] = warning
+	}
+	s.setCachedWalletBalance(cacheKey, response)
+	return c.JSON(response)
+}
+
+func walletBalanceCacheKey(walletAddress string, tokenAddress string, privacyTokenAddress string) string {
+	return strings.ToLower(strings.TrimSpace(walletAddress)) + ":" + strings.ToLower(strings.TrimSpace(tokenAddress)) + ":" + strings.ToLower(strings.TrimSpace(privacyTokenAddress))
+}
+
+func truthyQuery(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s Server) cachedWalletBalance(key string) (fiber.Map, bool) {
+	if s.walletBalanceCacheMu == nil {
+		return nil, false
+	}
+	s.walletBalanceCacheMu.Lock()
+	defer s.walletBalanceCacheMu.Unlock()
+	entry, ok := s.walletBalanceCache[key]
+	if !ok || time.Now().UTC().After(entry.Expires) {
+		if ok {
+			delete(s.walletBalanceCache, key)
+		}
+		return nil, false
+	}
+	return walletBalanceResponseMap(entry, true), true
+}
+
+func (s Server) setCachedWalletBalance(key string, response fiber.Map) {
+	if s.walletBalanceCacheMu == nil {
+		return
+	}
+	balance, _ := response["balance"].(fiber.Map)
+	balances, _ := response["balances"].([]fiber.Map)
+	warning, _ := response["warning"].(string)
+	s.walletBalanceCacheMu.Lock()
+	defer s.walletBalanceCacheMu.Unlock()
+	s.walletBalanceCache[key] = walletBalanceCacheEntry{
+		Balance:  cloneFiberMap(balance),
+		Balances: cloneFiberMaps(balances),
+		Warning:  warning,
+		Expires:  time.Now().UTC().Add(walletBalanceCacheTTL),
+	}
+}
+
+func walletBalanceResponseMap(entry walletBalanceCacheEntry, cached bool) fiber.Map {
+	response := fiber.Map{
+		"balance":  cloneFiberMap(entry.Balance),
+		"balances": cloneFiberMaps(entry.Balances),
+		"cached":   cached,
+	}
+	if strings.TrimSpace(entry.Warning) != "" {
+		response["warning"] = entry.Warning
+	}
+	return response
+}
+
+func cloneFiberMaps(items []fiber.Map) []fiber.Map {
+	cloned := make([]fiber.Map, 0, len(items))
+	for _, item := range items {
+		cloned = append(cloned, cloneFiberMap(item))
+	}
+	return cloned
+}
+
+func cloneFiberMap(item fiber.Map) fiber.Map {
+	cloned := fiber.Map{}
+	for key, value := range item {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func walletTokenBalanceMap(balance evm.TokenBalance, label string, symbol string) fiber.Map {
