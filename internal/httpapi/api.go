@@ -7,7 +7,6 @@ import (
 	"errors"
 	"math"
 	"math/big"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,7 +17,6 @@ import (
 	"github.com/techbudol1/budol-api/internal/evm"
 	"github.com/techbudol1/budol-api/internal/gmrengine"
 	"github.com/techbudol1/budol-api/internal/newsagent"
-	"github.com/techbudol1/budol-api/internal/privy"
 	"github.com/techbudol1/budol-api/internal/session"
 	"github.com/techbudol1/budol-api/internal/store"
 	"github.com/techbudol1/budol-api/internal/thirdweb"
@@ -38,7 +36,6 @@ type Server struct {
 	evm                  *evm.Client
 	gmrEngine            *gmrengine.Client
 	newsAgent            *newsagent.Agent
-	privy                *privy.Client
 	store                store.AdminStore
 	thirdweb             *thirdweb.Client
 	sessions             session.Manager
@@ -53,15 +50,6 @@ type walletBalanceCacheEntry struct {
 	Balances []fiber.Map
 	Warning  string
 	Expires  time.Time
-}
-
-type ThirdwebLoginRequest struct {
-	AuthToken  string          `json:"authToken"`
-	AuthResult json.RawMessage `json:"authResult"`
-}
-
-type PrivyLoginRequest struct {
-	AccessToken string `json:"accessToken"`
 }
 
 type AdminLoginRequest struct {
@@ -263,7 +251,6 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 		evm:                  evm.NewClient(cfg.WelcomeTokenRPCURL),
 		gmrEngine:            gmrEngineClient,
 		newsAgent:            newsAgent,
-		privy:                privy.NewClient(cfg.PrivyAPIBase, cfg.PrivyAppID, cfg.PrivyAppSecret, cfg.PrivyVerificationKey),
 		store:                userStore,
 		thirdweb:             thirdwebClient,
 		sessions:             sessions,
@@ -315,12 +302,8 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 		Max:        60,
 		Expiration: time.Minute,
 	})
-	api.Get("/auth/social/:provider", server.startSocialAuth)
-	api.Get("/auth/social/callback", server.socialAuthCallback)
 	api.Get("/auth/google/start", authRateLimit, server.startGoogleOAuth)
 	api.Get("/auth/google/callback", authRateLimit, server.googleOAuthCallback)
-	api.Post("/auth/thirdweb", authRateLimit, server.loginWithThirdweb)
-	api.Post("/auth/privy", authRateLimit, server.loginWithPrivy)
 	api.Post("/auth/wallet/nonce", authRateLimit, server.walletLoginNonce)
 	api.Post("/auth/wallet/verify", authRateLimit, server.walletLoginVerify)
 	api.Get("/auth/me", server.me)
@@ -429,162 +412,6 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 	engine.Get("/auth/me", server.engineAuthMe)
 
 	return app
-}
-
-func (s Server) loginWithThirdweb(c *fiber.Ctx) error {
-	var request ThirdwebLoginRequest
-	if err := c.BodyParser(&request); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
-	}
-
-	authToken, err := authTokenFromRequest(request)
-	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-
-	user, err := s.verifyAndLogin(c, authToken)
-	if err != nil {
-		return err
-	}
-
-	return c.JSON(fiber.Map{
-		"user": user,
-	})
-}
-
-func (s Server) loginWithPrivy(c *fiber.Ctx) error {
-	var request PrivyLoginRequest
-	if err := c.BodyParser(&request); err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
-	}
-	if strings.TrimSpace(request.AccessToken) == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "missing Privy access token")
-	}
-
-	claims, err := s.privy.VerifyAccessToken(request.AccessToken)
-	if err != nil {
-		return fiber.NewError(fiber.StatusUnauthorized, "invalid Privy login: "+err.Error())
-	}
-
-	identity, err := s.privy.UserIdentity(c.Context(), claims.UserID)
-	if err != nil {
-		return fiber.NewError(fiber.StatusUnauthorized, "invalid Privy user: "+err.Error())
-	}
-
-	user, err := s.verifyAndLoginPrivy(c, identity)
-	if err != nil {
-		return err
-	}
-
-	return c.JSON(fiber.Map{
-		"user": user,
-	})
-}
-
-func (s Server) startSocialAuth(c *fiber.Ctx) error {
-	provider := c.Params("provider")
-	if !validSocialProvider(provider) {
-		return fiber.NewError(fiber.StatusBadRequest, "unsupported social auth provider")
-	}
-
-	redirectURL := s.callbackURL()
-	target := strings.TrimRight(s.cfg.ThirdwebAPIBase, "/") + "/v1/auth/social?provider=" + url.QueryEscape(provider) + "&redirectUrl=" + url.QueryEscape(redirectURL)
-	return c.Redirect(target, fiber.StatusFound)
-}
-
-func (s Server) socialAuthCallback(c *fiber.Ctx) error {
-	authResult := c.Query("authResult")
-	if authResult == "" {
-		return fiber.NewError(fiber.StatusBadRequest, "missing thirdweb authResult")
-	}
-
-	authToken, err := authTokenFromAuthResult(json.RawMessage(authResult))
-	if err != nil {
-		return fiber.NewError(fiber.StatusBadRequest, err.Error())
-	}
-
-	if _, err := s.verifyAndLogin(c, authToken); err != nil {
-		return err
-	}
-
-	return c.Redirect(s.cfg.PublicAppURL, fiber.StatusFound)
-}
-
-func (s Server) verifyAndLogin(c *fiber.Ctx, authToken string) (store.User, error) {
-	identity, err := s.thirdweb.VerifyAuthToken(c.Context(), authToken)
-	if err != nil {
-		return store.User{}, fiber.NewError(fiber.StatusUnauthorized, "invalid thirdweb login")
-	}
-
-	user, err := s.store.UpsertFromThirdweb(c.Context(), identity)
-	if err != nil {
-		return store.User{}, fiber.NewError(fiber.StatusInternalServerError, "failed to save user")
-	}
-	s.grantWelcomeTokens(c, user)
-	if s.shouldCreateLoginNotification(c, user.ID) {
-		_, _ = s.store.CreateNotification(c.Context(), user.ID, "login", "Login successful", "Your BudolPH session is active on this browser.", "/account")
-	}
-
-	token, err := s.sessions.Issue(user)
-	if err != nil {
-		return store.User{}, fiber.NewError(fiber.StatusInternalServerError, "failed to issue session")
-	}
-
-	c.Cookie(&fiber.Cookie{
-		Name:     s.cfg.SessionCookieName,
-		Value:    token,
-		Expires:  time.Now().UTC().Add(s.sessions.TTL()),
-		HTTPOnly: true,
-		SameSite: fiber.CookieSameSiteLaxMode,
-		Secure:   s.cfg.IsProduction(),
-		Path:     "/",
-	})
-
-	return user, nil
-}
-
-func (s Server) verifyAndLoginPrivy(c *fiber.Ctx, identity store.PrivyIdentity) (store.User, error) {
-	user, err := s.store.UpsertFromPrivy(c.Context(), identity)
-	if err != nil {
-		return store.User{}, fiber.NewError(fiber.StatusInternalServerError, "failed to save Privy user")
-	}
-	s.registerEngineUserWallet(c, user, identity)
-	s.grantWelcomeTokens(c, user)
-	if s.shouldCreateLoginNotification(c, user.ID) {
-		_, _ = s.store.CreateNotification(c.Context(), user.ID, "login", "Login successful", "Your BudolPH session is active on this browser.", "/account")
-	}
-
-	token, err := s.sessions.Issue(user)
-	if err != nil {
-		return store.User{}, fiber.NewError(fiber.StatusInternalServerError, "failed to issue session")
-	}
-
-	c.Cookie(&fiber.Cookie{
-		Name:     s.cfg.SessionCookieName,
-		Value:    token,
-		Expires:  time.Now().UTC().Add(s.sessions.TTL()),
-		HTTPOnly: true,
-		SameSite: fiber.CookieSameSiteLaxMode,
-		Secure:   s.cfg.IsProduction(),
-		Path:     "/",
-	})
-
-	return user, nil
-}
-
-func (s Server) registerEngineUserWallet(c *fiber.Ctx, user store.User, identity store.PrivyIdentity) {
-	if s.gmrEngine == nil || !s.gmrEngine.Configured() {
-		return
-	}
-	_ = s.gmrEngine.UpsertUserWallet(c.Context(), gmrengine.UserWalletRequest{
-		Address:       user.WalletAddress,
-		AuthProvider:  firstNonEmpty(identity.AuthProvider, user.AuthProvider),
-		Email:         firstNonEmpty(identity.Email, user.Email),
-		Metadata:      identity.RawJSON,
-		UserID:        user.ID,
-		WalletCustody: firstNonEmpty(user.WalletCustody, "managed"),
-		WalletType:    firstNonEmpty(user.AuthType, "privy_oauth"),
-	})
 }
 
 func (s Server) me(c *fiber.Ctx) error {
@@ -3458,45 +3285,6 @@ func walletTransferNotificationLink(link string) string {
 		return ""
 	}
 	return link
-}
-
-func (s Server) callbackURL() string {
-	base := strings.TrimRight(s.cfg.PublicAPIURL, "/")
-	return base + "/api/auth/social/callback"
-}
-
-func validSocialProvider(provider string) bool {
-	switch provider {
-	case "google":
-		return true
-	default:
-		return false
-	}
-}
-
-func authTokenFromRequest(request ThirdwebLoginRequest) (string, error) {
-	if strings.TrimSpace(request.AuthToken) != "" {
-		return request.AuthToken, nil
-	}
-	if len(request.AuthResult) > 0 {
-		return authTokenFromAuthResult(request.AuthResult)
-	}
-	return "", fiber.NewError(fiber.StatusBadRequest, "missing thirdweb auth token")
-}
-
-func authTokenFromAuthResult(raw json.RawMessage) (string, error) {
-	var payload struct {
-		StoredToken struct {
-			CookieString string `json:"cookieString"`
-		} `json:"storedToken"`
-	}
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return "", fiber.NewError(fiber.StatusBadRequest, "invalid thirdweb authResult")
-	}
-	if strings.TrimSpace(payload.StoredToken.CookieString) == "" {
-		return "", fiber.NewError(fiber.StatusBadRequest, "missing thirdweb authResult stored token")
-	}
-	return payload.StoredToken.CookieString, nil
 }
 
 func errorHandler(c *fiber.Ctx, err error) error {

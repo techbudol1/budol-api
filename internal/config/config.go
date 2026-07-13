@@ -24,10 +24,6 @@ type Config struct {
 	CollateralGuaranteeEnabled          bool
 	PublicAppURL                        string
 	PublicAPIURL                        string
-	PrivyAPIBase                        string
-	PrivyAppID                          string
-	PrivyAppSecret                      string
-	PrivyVerificationKey                string
 	SessionCookieName                   string
 	SessionSecret                       string
 	SessionTTL                          time.Duration
@@ -81,7 +77,7 @@ type Config struct {
 	SmartWalletBundlerURL               string
 	SmartWalletPaymasterAddress         string
 	SmartWalletPaymasterURL             string
-	SmartWalletGasSponsored            bool
+	SmartWalletGasSponsored             bool
 	MemgraphURI                         string
 	MemgraphUser                        string
 	MemgraphPassword                    string
@@ -118,10 +114,6 @@ func Load() (Config, error) {
 		WelcomeTokenRPCURL:                  env("WELCOME_TOKEN_RPC_URL", "https://horizen-testnet.rpc.caldera.xyz/http"),
 		CollateralBufferBps:                 envNonNegativeInt("COLLATERAL_BUFFER_BPS", 0),
 		CollateralGuaranteeEnabled:          envBool("COLLATERAL_GUARANTEE_ENABLED", false),
-		PrivyAPIBase:                        env("PRIVY_API_BASE", "https://api.privy.io"),
-		PrivyAppID:                          os.Getenv("PRIVY_APP_ID"),
-		PrivyAppSecret:                      os.Getenv("PRIVY_APP_SECRET"),
-		PrivyVerificationKey:                os.Getenv("PRIVY_VERIFICATION_KEY"),
 		PublicAppURL:                        env("PUBLIC_APP_URL", "http://localhost:3000"),
 		PublicAPIURL:                        env("PUBLIC_API_URL", "http://localhost:8080"),
 		SessionCookieName:                   env("SESSION_COOKIE_NAME", "budol_session"),
@@ -176,7 +168,7 @@ func Load() (Config, error) {
 		SmartWalletBundlerURL:               os.Getenv("HORIZEN_AA_BUNDLER_URL"),
 		SmartWalletPaymasterAddress:         os.Getenv("HORIZEN_AA_PAYMASTER_ADDRESS"),
 		SmartWalletPaymasterURL:             env("HORIZEN_AA_PAYMASTER_URL", os.Getenv("HORIZEN_AA_BUNDLER_URL")),
-		SmartWalletGasSponsored:            envBool("HORIZEN_AA_GAS_SPONSORED", false),
+		SmartWalletGasSponsored:             envBool("HORIZEN_AA_GAS_SPONSORED", false),
 		MemgraphURI:                         env("MEMGRAPH_URI", "bolt://localhost:7687"),
 		MemgraphUser:                        os.Getenv("MEMGRAPH_USER"),
 		MemgraphPassword:                    os.Getenv("MEMGRAPH_PASSWORD"),
