@@ -97,6 +97,13 @@ type SponsorPolicyUpdateRequest struct {
 	MinSponsorBalanceRaw           string `json:"minSponsorBalanceRaw"`
 }
 
+type PrivacyAccessSettingsUpdateRequest struct {
+	CollectorAddress  string `json:"collectorAddress"`
+	HidePositionFee   string `json:"hidePositionFee"`
+	PrivateClaimFee   string `json:"privateClaimFee"`
+	ShieldedPayoutFee string `json:"shieldedPayoutFee"`
+}
+
 type TradeRequest struct {
 	PollID            string  `json:"pollId"`
 	Side              string  `json:"side"`
@@ -387,6 +394,7 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 	admin.Patch("/wallet/gas-free-trading", adminMutationRateLimit, server.adminUpdateGasFreeTrading)
 	admin.Patch("/wallet/trading-fee", adminMutationRateLimit, server.adminUpdateTradingFee)
 	admin.Patch("/wallet/sponsor-policy", adminMutationRateLimit, server.adminUpdateSponsorPolicy)
+	admin.Patch("/wallet/privacy-access", adminMutationRateLimit, server.adminUpdatePrivacyAccessSettings)
 	admin.Post("/wallet/transfer", adminMutationRateLimit, server.adminWalletTransfer)
 	admin.Post("/wallet/airdrop", adminMutationRateLimit, server.adminWalletAirdrop)
 	admin.Post("/wallet/burn", adminMutationRateLimit, server.adminWalletBurn)
@@ -787,6 +795,19 @@ func (s Server) attemptWelcomeTokenGrant(c *fiber.Ctx, user store.User, grant st
 func isZeroDecimalString(value string) bool {
 	parsed, ok := new(big.Int).SetString(strings.TrimSpace(value), 10)
 	return !ok || parsed.Sign() == 0
+}
+
+func isUnsignedIntegerString(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func hasAtLeastRawTokenBalance(balance string, required string) bool {
@@ -2597,6 +2618,14 @@ func (s Server) adminWalletConfig(c *fiber.Ctx) error {
 				"rate": float64(tradingFeeBps) / 10000,
 			},
 			"sponsorPolicy": sponsorPolicy,
+			"privacyAccess": fiber.Map{
+				"collectorAddress":  s.privacyFeeCollectorAddress(c.Context()),
+				"currency":          "tZEN",
+				"decimals":          18,
+				"hidePositionFee":   s.privacyFeeAmount(c.Context(), privacyFeeHidePosition),
+				"privateClaimFee":   s.privacyFeeAmount(c.Context(), privacyFeePrivateClaim),
+				"shieldedPayoutFee": s.privacyFeeAmount(c.Context(), privacyFeeShieldedPayout),
+			},
 			"gasFreeTrading": fiber.Map{
 				"enabled":               gasFreeEnabled,
 				"scope":                 "self_custody_wallets",
@@ -2682,6 +2711,49 @@ func (s Server) adminUpdateSponsorPolicy(c *fiber.Ctx) error {
 		TargetType: "wallet",
 		TargetID:   "gas_free_sponsor_policy",
 		Detail:     "Gas-free sponsor limits updated.",
+		IPAddress:  c.IP(),
+		UserAgent:  c.Get("User-Agent"),
+	})
+	return s.adminWalletConfig(c)
+}
+
+func (s Server) adminUpdatePrivacyAccessSettings(c *fiber.Ctx) error {
+	var request PrivacyAccessSettingsUpdateRequest
+	if err := c.BodyParser(&request); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
+	}
+	collector := strings.ToLower(strings.TrimSpace(request.CollectorAddress))
+	if collector != "" && !thirdweb.IsEVMAddress(collector) {
+		return fiber.NewError(fiber.StatusBadRequest, "collectorAddress must be a valid EVM address")
+	}
+	fees := map[string]string{
+		privacyHidePositionFeeSetting:   strings.TrimSpace(request.HidePositionFee),
+		privacyPrivateClaimFeeSetting:   strings.TrimSpace(request.PrivateClaimFee),
+		privacyShieldedPayoutFeeSetting: strings.TrimSpace(request.ShieldedPayoutFee),
+	}
+	for key, value := range fees {
+		if value == "" {
+			value = "0"
+		}
+		if !isUnsignedIntegerString(value) {
+			return fiber.NewError(fiber.StatusBadRequest, key+" must be raw native tZEN base units")
+		}
+		fees[key] = value
+	}
+	if err := s.store.SetSystemSetting(c.Context(), privacyFeeCollectorSetting, collector); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to update privacy fee collector")
+	}
+	for key, value := range fees {
+		if err := s.store.SetSystemSetting(c.Context(), key, value); err != nil {
+			return fiber.NewError(fiber.StatusInternalServerError, "failed to update privacy fee settings")
+		}
+	}
+	_, _ = s.store.CreateAdminActivity(c.Context(), store.AdminActivityInput{
+		Actor:      s.adminActor(c),
+		Action:     "update_privacy_access_settings",
+		TargetType: "wallet",
+		TargetID:   "privacy_access",
+		Detail:     "Privacy access fee settings updated.",
 		IPAddress:  c.IP(),
 		UserAgent:  c.Get("User-Agent"),
 	})

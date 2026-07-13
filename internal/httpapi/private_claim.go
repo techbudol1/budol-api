@@ -56,6 +56,13 @@ const (
 	privacyFeeShieldedPayout = "shielded_payout"
 )
 
+const (
+	privacyFeeCollectorSetting      = "zen_privacy_access_fee_collector_address"
+	privacyHidePositionFeeSetting   = "zen_hide_position_fee"
+	privacyPrivateClaimFeeSetting   = "zen_private_claim_fee"
+	privacyShieldedPayoutFeeSetting = "zen_shielded_payout_fee"
+)
+
 type privateClaimScriptResponse struct {
 	Note store.PrivateClaimNote `json:"note"`
 	Tree struct {
@@ -84,16 +91,17 @@ func (s Server) pollPrivateClaimTree(c *fiber.Ctx) error {
 }
 
 func (s Server) privacyAccessConfig(c *fiber.Ctx) error {
+	collector := s.privacyFeeCollectorAddress(c.Context())
 	return c.JSON(fiber.Map{
 		"chainId":          s.cfg.WelcomeTokenChainID,
-		"collectorAddress": strings.ToLower(strings.TrimSpace(s.cfg.ZENPrivacyAccessFeeCollectorAddress)),
+		"collectorAddress": strings.ToLower(collector),
 		"currency":         "tZEN",
 		"decimals":         18,
 		"mode":             "native",
 		"fees": fiber.Map{
-			privacyFeeHidePosition:   s.privacyFeeAmount(privacyFeeHidePosition),
-			privacyFeePrivateClaim:   s.privacyFeeAmount(privacyFeePrivateClaim),
-			privacyFeeShieldedPayout: s.privacyFeeAmount(privacyFeeShieldedPayout),
+			privacyFeeHidePosition:   s.privacyFeeAmount(c.Context(), privacyFeeHidePosition),
+			privacyFeePrivateClaim:   s.privacyFeeAmount(c.Context(), privacyFeePrivateClaim),
+			privacyFeeShieldedPayout: s.privacyFeeAmount(c.Context(), privacyFeeShieldedPayout),
 		},
 		"limitations": []string{
 			"hide_position_fee is configured but not enforced until public profile/trade feeds exist",
@@ -122,7 +130,7 @@ func (s Server) createManagedPrivacyAccessFee(c *fiber.Ctx) error {
 	if kind != privacyFeePrivateClaim && kind != privacyFeeShieldedPayout && kind != privacyFeeHidePosition {
 		return fiber.NewError(fiber.StatusBadRequest, "valid privacy fee kind is required")
 	}
-	amountRaw := s.privacyFeeAmount(kind)
+	amountRaw := s.privacyFeeAmount(c.Context(), kind)
 	amount, ok := new(big.Int).SetString(strings.TrimSpace(amountRaw), 10)
 	if !ok || amount.Sign() < 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "privacy access fee is misconfigured")
@@ -130,7 +138,7 @@ func (s Server) createManagedPrivacyAccessFee(c *fiber.Ctx) error {
 	if amount.Sign() == 0 {
 		return c.JSON(fiber.Map{"amountRaw": amountRaw, "kind": kind, "skipped": true, "transactionHash": ""})
 	}
-	collector := strings.TrimSpace(s.cfg.ZENPrivacyAccessFeeCollectorAddress)
+	collector := s.privacyFeeCollectorAddress(c.Context())
 	if !thirdweb.IsEVMAddress(collector) {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "privacy fee collector is not configured")
 	}
@@ -442,7 +450,23 @@ func (s Server) submitPrivateClaimProof(c *fiber.Ctx) error {
 	})
 }
 
-func (s Server) privacyFeeAmount(kind string) string {
+func (s Server) privacyFeeAmount(ctx context.Context, kind string) string {
+	settingKey := ""
+	switch kind {
+	case privacyFeeHidePosition:
+		settingKey = privacyHidePositionFeeSetting
+	case privacyFeePrivateClaim:
+		settingKey = privacyPrivateClaimFeeSetting
+	case privacyFeeShieldedPayout:
+		settingKey = privacyShieldedPayoutFeeSetting
+	default:
+		return "0"
+	}
+	if settingKey != "" {
+		if value, ok, err := s.store.GetSystemSetting(ctx, settingKey); err == nil && ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
 	switch kind {
 	case privacyFeeHidePosition:
 		return strings.TrimSpace(s.cfg.ZENHidePositionFee)
@@ -455,8 +479,21 @@ func (s Server) privacyFeeAmount(kind string) string {
 	}
 }
 
+func (s Server) privacyFeeCollectorAddress(ctx context.Context) string {
+	if value, ok, err := s.store.GetSystemSetting(ctx, privacyFeeCollectorSetting); err == nil && ok && strings.TrimSpace(value) != "" {
+		return strings.ToLower(strings.TrimSpace(value))
+	}
+	if strings.TrimSpace(s.cfg.ZENPrivacyAccessFeeCollectorAddress) != "" {
+		return strings.ToLower(strings.TrimSpace(s.cfg.ZENPrivacyAccessFeeCollectorAddress))
+	}
+	if wallet, err := s.projectWalletAddress(ctx); err == nil {
+		return strings.ToLower(strings.TrimSpace(wallet))
+	}
+	return ""
+}
+
 func (s Server) verifyPrivacyAccessFee(c *fiber.Ctx, user store.User, txHash string, kind string) error {
-	amount := s.privacyFeeAmount(kind)
+	amount := s.privacyFeeAmount(c.Context(), kind)
 	value, ok := new(big.Int).SetString(strings.TrimSpace(amount), 10)
 	if !ok || value.Sign() < 0 {
 		return fiber.NewError(fiber.StatusInternalServerError, "privacy access fee is misconfigured")
@@ -464,7 +501,7 @@ func (s Server) verifyPrivacyAccessFee(c *fiber.Ctx, user store.User, txHash str
 	if value.Sign() == 0 {
 		return nil
 	}
-	collector := strings.TrimSpace(s.cfg.ZENPrivacyAccessFeeCollectorAddress)
+	collector := s.privacyFeeCollectorAddress(c.Context())
 	if !thirdweb.IsEVMAddress(collector) {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "privacy fee collector is not configured")
 	}
