@@ -156,6 +156,9 @@ type SmartWalletConfig struct {
 	EntryPointVersion string `json:"entryPointVersion"`
 	FactoryAddress    string `json:"factoryAddress"`
 	BundlerURL        string `json:"bundlerUrl"`
+	PaymasterAddress  string `json:"paymasterAddress"`
+	PaymasterURL      string `json:"paymasterUrl"`
+	GasSponsored      bool   `json:"gasSponsored"`
 	AccountType       string `json:"accountType"`
 	Mode              string `json:"mode"`
 }
@@ -1299,6 +1302,9 @@ func (s Server) smartWalletConfig(c *fiber.Ctx) error {
 			EntryPointVersion: s.cfg.SmartWalletEntryPointVersion,
 			FactoryAddress:    strings.ToLower(s.cfg.SmartWalletFactoryAddress),
 			BundlerURL:        s.cfg.SmartWalletBundlerURL,
+			PaymasterAddress:  strings.ToLower(s.cfg.SmartWalletPaymasterAddress),
+			PaymasterURL:      s.cfg.SmartWalletPaymasterURL,
+			GasSponsored:      s.cfg.SmartWalletGasSponsored && thirdweb.IsEVMAddress(s.cfg.SmartWalletPaymasterAddress) && strings.TrimSpace(s.cfg.SmartWalletPaymasterURL) != "",
 			AccountType:       "SimpleAccount",
 			Mode:              "erc4337",
 		},

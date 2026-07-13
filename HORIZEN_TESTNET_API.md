@@ -26,6 +26,9 @@ HORIZEN_AA_ENTRYPOINT_ADDRESS=0xaab43855ac951ad96ba9646e7eb7d7c39378238f
 HORIZEN_AA_ENTRYPOINT_VERSION=0.8
 HORIZEN_AA_FACTORY_ADDRESS=0xa85ab2137e77b083a615fc861af140f370a26f3e
 HORIZEN_AA_BUNDLER_URL=https://bundler.budolph.xyz
+HORIZEN_AA_PAYMASTER_ADDRESS=0x2aA3A9D58F21Fb585D78B81246a265d0d013f3b9
+HORIZEN_AA_PAYMASTER_URL=https://bundler.budolph.xyz
+HORIZEN_AA_GAS_SPONSORED=true
 ```
 
 `HORIZEN_AA_BUNDLER_URL` should point to the private BudolPH bundler from `gmr-engine`:
@@ -55,4 +58,4 @@ When enabled, the frontend may submit escrow transfers from the user's derived S
 
 When disabled, the API verifies escrow transfers from the authenticated user's EOA.
 
-MVP limitation: this bundler submits UserOperations but does not itself sponsor gas. Gas-free smart-wallet execution still requires a paymaster or a funded/deposited smart account.
+Gas sponsorship is active when `HORIZEN_AA_GAS_SPONSORED=true` and the paymaster fields are set. The current BudolPH paymaster only sponsors SimpleAccount BUDOL transfers into the configured project escrow wallet.

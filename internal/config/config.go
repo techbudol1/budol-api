@@ -79,6 +79,9 @@ type Config struct {
 	SmartWalletEntryPointVersion        string
 	SmartWalletFactoryAddress           string
 	SmartWalletBundlerURL               string
+	SmartWalletPaymasterAddress         string
+	SmartWalletPaymasterURL             string
+	SmartWalletGasSponsored            bool
 	MemgraphURI                         string
 	MemgraphUser                        string
 	MemgraphPassword                    string
@@ -171,6 +174,9 @@ func Load() (Config, error) {
 		SmartWalletEntryPointVersion:        env("HORIZEN_AA_ENTRYPOINT_VERSION", "0.8"),
 		SmartWalletFactoryAddress:           os.Getenv("HORIZEN_AA_FACTORY_ADDRESS"),
 		SmartWalletBundlerURL:               os.Getenv("HORIZEN_AA_BUNDLER_URL"),
+		SmartWalletPaymasterAddress:         os.Getenv("HORIZEN_AA_PAYMASTER_ADDRESS"),
+		SmartWalletPaymasterURL:             env("HORIZEN_AA_PAYMASTER_URL", os.Getenv("HORIZEN_AA_BUNDLER_URL")),
+		SmartWalletGasSponsored:            envBool("HORIZEN_AA_GAS_SPONSORED", false),
 		MemgraphURI:                         env("MEMGRAPH_URI", "bolt://localhost:7687"),
 		MemgraphUser:                        os.Getenv("MEMGRAPH_USER"),
 		MemgraphPassword:                    os.Getenv("MEMGRAPH_PASSWORD"),
