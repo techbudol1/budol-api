@@ -13,7 +13,7 @@ import (
 
 	"github.com/techbudol1/budol-api/internal/gmrengine"
 	"github.com/techbudol1/budol-api/internal/store"
-	"github.com/techbudol1/budol-api/internal/thirdweb"
+	"github.com/techbudol1/budol-api/internal/walletops"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/gofiber/fiber/v2"
@@ -47,7 +47,7 @@ func (s Server) walletLoginNonce(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 	}
 	address := normalizeEVMAddress(request.Address)
-	if !thirdweb.IsEVMAddress(address) {
+	if !walletops.IsEVMAddress(address) {
 		return fiber.NewError(fiber.StatusBadRequest, "valid wallet address is required")
 	}
 	nonce, err := randomURLToken(24)
@@ -74,7 +74,7 @@ func (s Server) walletLoginVerify(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 	}
 	address := normalizeEVMAddress(request.Address)
-	if !thirdweb.IsEVMAddress(address) {
+	if !walletops.IsEVMAddress(address) {
 		return fiber.NewError(fiber.StatusBadRequest, "valid wallet address is required")
 	}
 	challenge, ok, err := s.store.ConsumeWalletLoginChallenge(c.Context(), address, strings.TrimSpace(request.Nonce), time.Now().UTC())

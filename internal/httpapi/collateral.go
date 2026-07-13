@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/techbudol1/budol-api/internal/store"
-	"github.com/techbudol1/budol-api/internal/thirdweb"
+	"github.com/techbudol1/budol-api/internal/walletops"
 )
 
 var errUnderCollateralized = errors.New("operation would make payout reserves under-collateralized")
@@ -41,7 +41,7 @@ func (s Server) projectWalletAddress(ctx context.Context) (string, error) {
 			walletAddress = strings.ToLower(strings.TrimSpace(wallet.Address))
 		}
 	}
-	if !thirdweb.IsEVMAddress(walletAddress) {
+	if !walletops.IsEVMAddress(walletAddress) {
 		return "", errors.New("project escrow wallet is not configured")
 	}
 	return walletAddress, nil

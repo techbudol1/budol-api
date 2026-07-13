@@ -28,10 +28,8 @@ type Config struct {
 	SessionSecret                       string
 	SessionTTL                          time.Duration
 	SeedDemoPolls                       bool
-	ThirdwebAPIBase                     string
-	ThirdwebSecretKey                   string
-	ThirdwebMeURL                       string
-	ThirdwebSendURL                     string
+	WalletOpsSecretKey                  string
+	WalletOpsSendURL                    string
 	GMREngineAPIBase                    string
 	GMREngineAPIKey                     string
 	GoogleOAuthClientID                 string
@@ -120,16 +118,14 @@ func Load() (Config, error) {
 		SessionSecret:                       os.Getenv("SESSION_SECRET"),
 		SessionTTL:                          time.Duration(envInt("SESSION_TTL_HOURS", 24)) * time.Hour,
 		SeedDemoPolls:                       envBool("SEED_DEMO_POLLS", false),
-		ThirdwebAPIBase:                     env("THIRDWEB_API_BASE", "https://api.thirdweb.com"),
-		ThirdwebSecretKey:                   os.Getenv("THIRDWEB_SECRET_KEY"),
-		ThirdwebMeURL:                       env("THIRDWEB_ME_URL", "https://api.thirdweb.com/v1/wallets/me"),
-		ThirdwebSendURL:                     env("THIRDWEB_SEND_URL", "https://api.thirdweb.com/v1/wallets/send"),
+		WalletOpsSecretKey:                  os.Getenv("WALLET_OPS_SECRET_KEY"),
+		WalletOpsSendURL:                    env("WALLET_OPS_SEND_URL", "https://api.walletops.com/v1/wallets/send"),
 		GMREngineAPIBase:                    env("GMR_ENGINE_API_BASE", "http://localhost:8090"),
 		GMREngineAPIKey:                     os.Getenv("GMR_ENGINE_API_KEY"),
 		GoogleOAuthClientID:                 os.Getenv("GOOGLE_OAUTH_CLIENT_ID"),
 		GoogleOAuthClientSecret:             os.Getenv("GOOGLE_OAUTH_CLIENT_SECRET"),
 		GoogleOAuthRedirectURL:              env("GOOGLE_OAUTH_REDIRECT_URL", env("PUBLIC_API_URL", "http://localhost:8080")+"/api/auth/google/callback"),
-		ProjectWallet:                       firstEnv("BUDOL_PROJECT_WALLET_ADDRESS", "THIRDWEB_PROJECT_WALLET_ADDRESS", "SERVER_VAULT_WALLET_ADDRESS"),
+		ProjectWallet:                       firstEnv("BUDOL_PROJECT_WALLET_ADDRESS", "WALLET_OPS_PROJECT_WALLET_ADDRESS", "SERVER_VAULT_WALLET_ADDRESS"),
 		ZENPrivacyAccessFeeCollectorAddress: os.Getenv("ZEN_PRIVACY_ACCESS_FEE_COLLECTOR_ADDRESS"),
 		ZENHidePositionFee:                  env("ZEN_HIDE_POSITION_FEE", "0"),
 		ZENPrivateClaimFee:                  env("ZEN_PRIVATE_CLAIM_FEE", "0"),

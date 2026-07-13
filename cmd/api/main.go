@@ -14,7 +14,7 @@ import (
 	"github.com/techbudol1/budol-api/internal/newsagent"
 	"github.com/techbudol1/budol-api/internal/session"
 	"github.com/techbudol1/budol-api/internal/store"
-	"github.com/techbudol1/budol-api/internal/thirdweb"
+	"github.com/techbudol1/budol-api/internal/walletops"
 )
 
 func main() {
@@ -49,7 +49,7 @@ func main() {
 	app := httpapi.New(
 		cfg,
 		userStore,
-		thirdweb.NewClient(cfg.ThirdwebMeURL, cfg.ThirdwebSendURL, cfg.ThirdwebSecretKey),
+		walletops.NewClient(cfg.WalletOpsSendURL, cfg.WalletOpsSecretKey),
 		gmrengine.NewClient(cfg.GMREngineAPIBase, cfg.GMREngineAPIKey),
 		newsScout,
 		session.NewManager(cfg.SessionSecret, cfg.SessionTTL),

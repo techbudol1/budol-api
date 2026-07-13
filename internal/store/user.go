@@ -11,23 +11,23 @@ import (
 )
 
 type User struct {
-	ID             string `json:"id"`
-	WalletAddress  string `json:"walletAddress"`
-	PublicAlias    string `json:"publicAlias"`
-	ThirdwebUserID string `json:"thirdwebUserId,omitempty"`
-	ProviderUserID string `json:"providerUserId,omitempty"`
-	AuthProvider   string `json:"authProvider,omitempty"`
-	AuthType       string `json:"authType"`
-	Email          string `json:"email,omitempty"`
-	Phone          string `json:"phone,omitempty"`
-	Role           string `json:"role"`
-	Status         string `json:"status"`
-	WalletCustody  string `json:"walletCustody"`
-	Notes          string `json:"notes,omitempty"`
-	CreatedAt      string `json:"createdAt"`
-	LastLoginAt    string `json:"lastLoginAt"`
-	LoginCount     int64  `json:"loginCount"`
-	IsNew          bool   `json:"-"`
+	ID              string `json:"id"`
+	WalletAddress   string `json:"walletAddress"`
+	PublicAlias     string `json:"publicAlias"`
+	WalletOpsUserID string `json:"walletopsUserId,omitempty"`
+	ProviderUserID  string `json:"providerUserId,omitempty"`
+	AuthProvider    string `json:"authProvider,omitempty"`
+	AuthType        string `json:"authType"`
+	Email           string `json:"email,omitempty"`
+	Phone           string `json:"phone,omitempty"`
+	Role            string `json:"role"`
+	Status          string `json:"status"`
+	WalletCustody   string `json:"walletCustody"`
+	Notes           string `json:"notes,omitempty"`
+	CreatedAt       string `json:"createdAt"`
+	LastLoginAt     string `json:"lastLoginAt"`
+	LoginCount      int64  `json:"loginCount"`
+	IsNew           bool   `json:"-"`
 }
 
 type TokenGrant struct {
@@ -46,22 +46,22 @@ type TokenGrant struct {
 	UpdatedAt      string   `json:"updatedAt"`
 }
 
-type ThirdwebIdentity struct {
-	WalletAddress  string
-	ThirdwebUserID string
-	AuthProvider   string
-	Email          string
-	Phone          string
-	RawJSON        string
+type WalletOpsIdentity struct {
+	WalletAddress   string
+	WalletOpsUserID string
+	AuthProvider    string
+	Email           string
+	Phone           string
+	RawJSON         string
 }
 
-type PrivyIdentity struct {
-	WalletAddress string
-	PrivyUserID   string
-	AuthProvider  string
-	Email         string
-	Phone         string
-	RawJSON       string
+type LegacyEmbeddedIdentity struct {
+	WalletAddress        string
+	LegacyEmbeddedUserID string
+	AuthProvider         string
+	Email                string
+	Phone                string
+	RawJSON              string
 }
 
 type GoogleManagedIdentity struct {
@@ -95,8 +95,8 @@ type WalletLoginChallenge struct {
 }
 
 type UserStore interface {
-	UpsertFromThirdweb(ctx context.Context, identity ThirdwebIdentity) (User, error)
-	UpsertFromPrivy(ctx context.Context, identity PrivyIdentity) (User, error)
+	UpsertFromWalletOps(ctx context.Context, identity WalletOpsIdentity) (User, error)
+	UpsertFromLegacyEmbedded(ctx context.Context, identity LegacyEmbeddedIdentity) (User, error)
 	UpsertExternalWallet(ctx context.Context, identity ExternalWalletIdentity) (User, error)
 	UpsertGoogleManaged(ctx context.Context, identity GoogleManagedIdentity) (User, error)
 	UpsertSocialManaged(ctx context.Context, identity SocialManagedIdentity) (User, error)
@@ -143,18 +143,18 @@ func NewMemgraphUserStore(ctx context.Context, uri string, username string, pass
 	return &MemgraphUserStore{driver: driver}, nil
 }
 
-func (s *MemgraphUserStore) UpsertFromThirdweb(ctx context.Context, identity ThirdwebIdentity) (User, error) {
+func (s *MemgraphUserStore) UpsertFromWalletOps(ctx context.Context, identity WalletOpsIdentity) (User, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	params := map[string]any{
-		"newID":          uuid.NewString(),
-		"publicAlias":    newPublicAlias(),
-		"walletAddress":  identity.WalletAddress,
-		"thirdwebUserId": identity.ThirdwebUserID,
-		"authProvider":   identity.AuthProvider,
-		"email":          identity.Email,
-		"phone":          identity.Phone,
-		"rawThirdweb":    identity.RawJSON,
-		"now":            now,
+		"newID":           uuid.NewString(),
+		"publicAlias":     newPublicAlias(),
+		"walletAddress":   identity.WalletAddress,
+		"walletopsUserId": identity.WalletOpsUserID,
+		"authProvider":    identity.AuthProvider,
+		"email":           identity.Email,
+		"phone":           identity.Phone,
+		"rawWalletOps":    identity.RawJSON,
+		"now":             now,
 	}
 
 	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
@@ -173,13 +173,13 @@ SET
   u.updatedAt = $now,
   u.lastLoginAt = $now,
   u.loginCount = coalesce(u.loginCount, 0) + 1,
-  u.thirdwebUserId = $thirdwebUserId,
+  u.walletopsUserId = $walletopsUserId,
   u.authProvider = $authProvider,
-  u.authType = "thirdweb_social",
+  u.authType = "walletops_social",
   u.walletCustody = "managed",
   u.email = $email,
   u.phone = $phone,
-  u.thirdwebProfile = $rawThirdweb,
+  u.walletopsProfile = $rawWalletOps,
   u.role = coalesce(u.role, "user"),
   u.status = coalesce(u.status, "active"),
   u.notes = coalesce(u.notes, "")
@@ -187,8 +187,8 @@ RETURN
   u.id AS id,
   u.walletAddress AS walletAddress,
   coalesce(u.publicAlias, "") AS publicAlias,
-  coalesce(u.thirdwebUserId, "") AS thirdwebUserId,
-  coalesce(u.providerUserId, u.googleUserId, u.privyUserId, "") AS providerUserId,
+  coalesce(u.walletopsUserId, "") AS walletopsUserId,
+  coalesce(u.providerUserId, u.googleUserId, u.legacyEmbeddedUserId, "") AS providerUserId,
   coalesce(u.authProvider, "") AS authProvider,
   coalesce(u.authType, "") AS authType,
   coalesce(u.email, "") AS email,
@@ -218,18 +218,18 @@ RETURN
 	return result.(User), nil
 }
 
-func (s *MemgraphUserStore) UpsertFromPrivy(ctx context.Context, identity PrivyIdentity) (User, error) {
+func (s *MemgraphUserStore) UpsertFromLegacyEmbedded(ctx context.Context, identity LegacyEmbeddedIdentity) (User, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	params := map[string]any{
-		"newID":         uuid.NewString(),
-		"publicAlias":   newPublicAlias(),
-		"walletAddress": identity.WalletAddress,
-		"privyUserId":   identity.PrivyUserID,
-		"authProvider":  identity.AuthProvider,
-		"email":         identity.Email,
-		"phone":         identity.Phone,
-		"rawPrivy":      identity.RawJSON,
-		"now":           now,
+		"newID":                uuid.NewString(),
+		"publicAlias":          newPublicAlias(),
+		"walletAddress":        identity.WalletAddress,
+		"legacyEmbeddedUserId": identity.LegacyEmbeddedUserID,
+		"authProvider":         identity.AuthProvider,
+		"email":                identity.Email,
+		"phone":                identity.Phone,
+		"rawLegacyEmbedded":    identity.RawJSON,
+		"now":                  now,
 	}
 
 	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
@@ -248,14 +248,14 @@ SET
   u.updatedAt = $now,
   u.lastLoginAt = $now,
   u.loginCount = coalesce(u.loginCount, 0) + 1,
-  u.privyUserId = $privyUserId,
-  u.thirdwebUserId = "",
+  u.legacyEmbeddedUserId = $legacyEmbeddedUserId,
+  u.walletopsUserId = "",
   u.authProvider = $authProvider,
-  u.authType = "privy_oauth",
+  u.authType = "embedded_oauth",
   u.walletCustody = "managed",
   u.email = $email,
   u.phone = $phone,
-  u.privyProfile = $rawPrivy,
+  u.legacyEmbeddedProfile = $rawLegacyEmbedded,
   u.role = coalesce(u.role, "user"),
   u.status = coalesce(u.status, "active"),
   u.notes = coalesce(u.notes, "")
@@ -263,8 +263,8 @@ RETURN
   u.id AS id,
   u.walletAddress AS walletAddress,
   coalesce(u.publicAlias, "") AS publicAlias,
-  coalesce(u.thirdwebUserId, "") AS thirdwebUserId,
-  coalesce(u.providerUserId, u.googleUserId, u.privyUserId, "") AS providerUserId,
+  coalesce(u.walletopsUserId, "") AS walletopsUserId,
+  coalesce(u.providerUserId, u.googleUserId, u.legacyEmbeddedUserId, "") AS providerUserId,
   coalesce(u.authProvider, "") AS authProvider,
   coalesce(u.authType, "") AS authType,
   coalesce(u.email, "") AS email,
@@ -324,7 +324,7 @@ SET
   u.loginCount = coalesce(u.loginCount, 0) + 1,
   u.walletAddress = CASE WHEN $walletAddress <> "" THEN $walletAddress ELSE coalesce(u.walletAddress, "") END,
   u.googleUserId = $googleUserId,
-  u.thirdwebUserId = "",
+  u.walletopsUserId = "",
   u.authProvider = "google",
   u.authType = "google_oauth",
   u.walletCustody = "managed",
@@ -338,8 +338,8 @@ RETURN
   u.id AS id,
   u.walletAddress AS walletAddress,
   coalesce(u.publicAlias, "") AS publicAlias,
-  coalesce(u.thirdwebUserId, "") AS thirdwebUserId,
-  coalesce(u.providerUserId, u.googleUserId, u.privyUserId, "") AS providerUserId,
+  coalesce(u.walletopsUserId, "") AS walletopsUserId,
+  coalesce(u.providerUserId, u.googleUserId, u.legacyEmbeddedUserId, "") AS providerUserId,
   coalesce(u.authProvider, "") AS authProvider,
   coalesce(u.authType, "") AS authType,
   coalesce(u.email, "") AS email,
@@ -399,7 +399,7 @@ SET
   u.loginCount = coalesce(u.loginCount, 0) + 1,
   u.walletAddress = CASE WHEN $walletAddress <> "" THEN $walletAddress ELSE coalesce(u.walletAddress, "") END,
   u.providerUserId = $providerUserID,
-  u.thirdwebUserId = "",
+  u.walletopsUserId = "",
   u.authProvider = $authProvider,
   u.authType = $authType,
   u.walletCustody = "managed",
@@ -413,8 +413,8 @@ RETURN
   u.id AS id,
   u.walletAddress AS walletAddress,
   coalesce(u.publicAlias, "") AS publicAlias,
-  coalesce(u.thirdwebUserId, "") AS thirdwebUserId,
-  coalesce(u.providerUserId, u.googleUserId, u.privyUserId, "") AS providerUserId,
+  coalesce(u.walletopsUserId, "") AS walletopsUserId,
+  coalesce(u.providerUserId, u.googleUserId, u.legacyEmbeddedUserId, "") AS providerUserId,
   coalesce(u.authProvider, "") AS authProvider,
   coalesce(u.authType, "") AS authType,
   coalesce(u.email, "") AS email,
@@ -464,8 +464,8 @@ RETURN
   u.id AS id,
   u.walletAddress AS walletAddress,
   coalesce(u.publicAlias, "") AS publicAlias,
-  coalesce(u.thirdwebUserId, "") AS thirdwebUserId,
-  coalesce(u.providerUserId, u.googleUserId, u.privyUserId, "") AS providerUserId,
+  coalesce(u.walletopsUserId, "") AS walletopsUserId,
+  coalesce(u.providerUserId, u.googleUserId, u.legacyEmbeddedUserId, "") AS providerUserId,
   coalesce(u.authProvider, "") AS authProvider,
   coalesce(u.authType, "") AS authType,
   coalesce(u.email, "") AS email,
@@ -524,7 +524,7 @@ SET
   u.lastLoginAt = $now,
   u.loginCount = coalesce(u.loginCount, 0) + 1,
   u.walletAddress = $walletAddress,
-  u.thirdwebUserId = "",
+  u.walletopsUserId = "",
   u.authProvider = "evm_wallet",
   u.authType = "evm_wallet",
   u.walletCustody = "external",
@@ -538,8 +538,8 @@ RETURN
   u.id AS id,
   u.walletAddress AS walletAddress,
   coalesce(u.publicAlias, "") AS publicAlias,
-  coalesce(u.thirdwebUserId, "") AS thirdwebUserId,
-  coalesce(u.providerUserId, u.googleUserId, u.privyUserId, "") AS providerUserId,
+  coalesce(u.walletopsUserId, "") AS walletopsUserId,
+  coalesce(u.providerUserId, u.googleUserId, u.legacyEmbeddedUserId, "") AS providerUserId,
   coalesce(u.authProvider, "") AS authProvider,
   coalesce(u.authType, "") AS authType,
   coalesce(u.email, "") AS email,
@@ -666,8 +666,8 @@ RETURN
   u.id AS id,
   u.walletAddress AS walletAddress,
   coalesce(u.publicAlias, "") AS publicAlias,
-  coalesce(u.thirdwebUserId, "") AS thirdwebUserId,
-  coalesce(u.providerUserId, u.googleUserId, u.privyUserId, "") AS providerUserId,
+  coalesce(u.walletopsUserId, "") AS walletopsUserId,
+  coalesce(u.providerUserId, u.googleUserId, u.legacyEmbeddedUserId, "") AS providerUserId,
   coalesce(u.authProvider, "") AS authProvider,
   coalesce(u.authType, "") AS authType,
   coalesce(u.email, "") AS email,
@@ -728,8 +728,8 @@ RETURN
   u.id AS id,
   u.walletAddress AS walletAddress,
   coalesce(u.publicAlias, "") AS publicAlias,
-  coalesce(u.thirdwebUserId, "") AS thirdwebUserId,
-  coalesce(u.providerUserId, u.googleUserId, u.privyUserId, "") AS providerUserId,
+  coalesce(u.walletopsUserId, "") AS walletopsUserId,
+  coalesce(u.providerUserId, u.googleUserId, u.legacyEmbeddedUserId, "") AS providerUserId,
   coalesce(u.authProvider, "") AS authProvider,
   coalesce(u.authType, "") AS authType,
   coalesce(u.email, "") AS email,
@@ -776,8 +776,8 @@ RETURN
   u.id AS id,
   u.walletAddress AS walletAddress,
   coalesce(u.publicAlias, "") AS publicAlias,
-  coalesce(u.thirdwebUserId, "") AS thirdwebUserId,
-  coalesce(u.providerUserId, u.googleUserId, u.privyUserId, "") AS providerUserId,
+  coalesce(u.walletopsUserId, "") AS walletopsUserId,
+  coalesce(u.providerUserId, u.googleUserId, u.legacyEmbeddedUserId, "") AS providerUserId,
   coalesce(u.authProvider, "") AS authProvider,
   coalesce(u.authType, "") AS authType,
   coalesce(u.email, "") AS email,
@@ -812,23 +812,23 @@ RETURN
 
 func userFromRecord(record *neo4j.Record) User {
 	return User{
-		ID:             stringValue(record, "id"),
-		WalletAddress:  stringValue(record, "walletAddress"),
-		PublicAlias:    stringValue(record, "publicAlias"),
-		ThirdwebUserID: stringValue(record, "thirdwebUserId"),
-		ProviderUserID: stringValue(record, "providerUserId"),
-		AuthProvider:   stringValue(record, "authProvider"),
-		AuthType:       stringValue(record, "authType"),
-		Email:          stringValue(record, "email"),
-		Phone:          stringValue(record, "phone"),
-		Role:           stringValue(record, "role"),
-		Status:         stringValue(record, "status"),
-		WalletCustody:  stringValue(record, "walletCustody"),
-		Notes:          stringValue(record, "notes"),
-		CreatedAt:      stringValue(record, "createdAt"),
-		LastLoginAt:    stringValue(record, "lastLoginAt"),
-		LoginCount:     intValue(record, "loginCount"),
-		IsNew:          boolValue(record, "isNew"),
+		ID:              stringValue(record, "id"),
+		WalletAddress:   stringValue(record, "walletAddress"),
+		PublicAlias:     stringValue(record, "publicAlias"),
+		WalletOpsUserID: stringValue(record, "walletopsUserId"),
+		ProviderUserID:  stringValue(record, "providerUserId"),
+		AuthProvider:    stringValue(record, "authProvider"),
+		AuthType:        stringValue(record, "authType"),
+		Email:           stringValue(record, "email"),
+		Phone:           stringValue(record, "phone"),
+		Role:            stringValue(record, "role"),
+		Status:          stringValue(record, "status"),
+		WalletCustody:   stringValue(record, "walletCustody"),
+		Notes:           stringValue(record, "notes"),
+		CreatedAt:       stringValue(record, "createdAt"),
+		LastLoginAt:     stringValue(record, "lastLoginAt"),
+		LoginCount:      intValue(record, "loginCount"),
+		IsNew:           boolValue(record, "isNew"),
 	}
 }
 

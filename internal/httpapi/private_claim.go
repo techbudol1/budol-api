@@ -17,7 +17,7 @@ import (
 
 	"github.com/techbudol1/budol-api/internal/gmrengine"
 	"github.com/techbudol1/budol-api/internal/store"
-	"github.com/techbudol1/budol-api/internal/thirdweb"
+	"github.com/techbudol1/budol-api/internal/walletops"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -139,7 +139,7 @@ func (s Server) createManagedPrivacyAccessFee(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"amountRaw": amountRaw, "kind": kind, "skipped": true, "transactionHash": ""})
 	}
 	collector := s.privacyFeeCollectorAddress(c.Context())
-	if !thirdweb.IsEVMAddress(collector) {
+	if !walletops.IsEVMAddress(collector) {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "privacy fee collector is not configured")
 	}
 	result, err := s.gmrEngine.TransferManagedNative(c.Context(), gmrengine.ManagedNativeTransferRequest{
@@ -333,7 +333,7 @@ func (s Server) claimPrivatePayout(c *fiber.Ctx) error {
 			return fiber.NewError(fiber.StatusBadGateway, payoutErr.Error())
 		}
 		transactionIDs = result.TransactionIDs
-		payoutStatus, payoutError = s.waitForThirdwebTransactionStatus(c, transactionIDs)
+		payoutStatus, payoutError = s.waitForWalletOpsTransactionStatus(c, transactionIDs)
 		if directPayoutFallback {
 			payoutMode = "direct_fallback"
 		}
@@ -502,10 +502,10 @@ func (s Server) verifyPrivacyAccessFee(c *fiber.Ctx, user store.User, txHash str
 		return nil
 	}
 	collector := s.privacyFeeCollectorAddress(c.Context())
-	if !thirdweb.IsEVMAddress(collector) {
+	if !walletops.IsEVMAddress(collector) {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "privacy fee collector is not configured")
 	}
-	if !thirdweb.IsEVMAddress(user.WalletAddress) {
+	if !walletops.IsEVMAddress(user.WalletAddress) {
 		return fiber.NewError(fiber.StatusBadRequest, "user wallet address is invalid")
 	}
 	txHash = strings.TrimSpace(txHash)

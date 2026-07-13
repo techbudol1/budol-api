@@ -18,7 +18,7 @@ import (
 
 	"github.com/techbudol1/budol-api/internal/gmrengine"
 	"github.com/techbudol1/budol-api/internal/store"
-	"github.com/techbudol1/budol-api/internal/thirdweb"
+	"github.com/techbudol1/budol-api/internal/walletops"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -206,7 +206,7 @@ func (s Server) submitShieldedWithdrawalProof(c *fiber.Ctx) error {
 	if !isBytes32Hex(request.NullifierHash) {
 		return fiber.NewError(fiber.StatusBadRequest, "nullifierHash must be a 32-byte hex string")
 	}
-	if !thirdweb.IsEVMAddress(request.Recipient) {
+	if !walletops.IsEVMAddress(request.Recipient) {
 		return fiber.NewError(fiber.StatusBadRequest, "recipient must be a valid EVM address")
 	}
 	if len(request.Proof) == 0 || string(request.Proof) == "null" {
@@ -276,7 +276,7 @@ func (s Server) withdrawShieldedPayout(c *fiber.Ctx) error {
 	if !isBytes32Hex(request.NullifierHash) {
 		return fiber.NewError(fiber.StatusBadRequest, "nullifierHash must be a 32-byte hex string")
 	}
-	if !thirdweb.IsEVMAddress(request.Recipient) {
+	if !walletops.IsEVMAddress(request.Recipient) {
 		return fiber.NewError(fiber.StatusBadRequest, "recipient must be a valid EVM address")
 	}
 	withdrawalMode := strings.ToLower(strings.TrimSpace(s.cfg.ShieldedWithdrawalMode))
@@ -572,7 +572,7 @@ func (s Server) creditShieldedPayoutSplit(ctx context.Context, payoutAmount stri
 		return shieldedPayoutCreditResult{}, err
 	}
 	if !ok {
-		payoutQuantity, _ := thirdweb.TokenQuantity(payoutAmount, s.cfg.WelcomeTokenDecimals)
+		payoutQuantity, _ := walletops.TokenQuantity(payoutAmount, s.cfg.WelcomeTokenDecimals)
 		return shieldedPayoutCreditResult{}, fmt.Errorf("claim payout %s base units cannot be exactly split across configured shielded pool denominations", payoutQuantity)
 	}
 	selected, err := s.selectShieldedPayoutCommitments(plan, noteCommitments)
@@ -656,7 +656,7 @@ func (s Server) shieldedPayoutPoolForDenomination(denomination string) (string, 
 }
 
 func (s Server) shieldedPayoutPoolForAmount(payoutAmount string) (string, string, bool, error) {
-	payoutQuantity, err := thirdweb.TokenQuantity(strings.TrimSpace(payoutAmount), s.cfg.WelcomeTokenDecimals)
+	payoutQuantity, err := walletops.TokenQuantity(strings.TrimSpace(payoutAmount), s.cfg.WelcomeTokenDecimals)
 	if err != nil {
 		return "", "", false, err
 	}
@@ -665,7 +665,7 @@ func (s Server) shieldedPayoutPoolForAmount(payoutAmount string) (string, string
 }
 
 func (s Server) shieldedPayoutPlanForAmount(payoutAmount string) ([]shieldedPayoutPoolPlan, bool, error) {
-	payoutQuantity, err := thirdweb.TokenQuantity(strings.TrimSpace(payoutAmount), s.cfg.WelcomeTokenDecimals)
+	payoutQuantity, err := walletops.TokenQuantity(strings.TrimSpace(payoutAmount), s.cfg.WelcomeTokenDecimals)
 	if err != nil {
 		return nil, false, err
 	}
@@ -1077,7 +1077,7 @@ func bytes32ToFieldString(value string) string {
 
 func evmAddressToFieldString(value string) string {
 	value = strings.TrimSpace(value)
-	if !thirdweb.IsEVMAddress(value) {
+	if !walletops.IsEVMAddress(value) {
 		return ""
 	}
 	number, ok := fieldElement(value)

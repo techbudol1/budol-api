@@ -1,4 +1,4 @@
-package thirdweb
+package walletops
 
 import (
 	"bytes"
@@ -12,8 +12,6 @@ import (
 	"regexp"
 	"strings"
 	"time"
-
-	"github.com/techbudol1/budol-api/internal/store"
 )
 
 var evmAddressPattern = regexp.MustCompile(`^0x[0-9a-fA-F]{40}$`)
@@ -24,7 +22,6 @@ func IsEVMAddress(value string) bool {
 
 type Client struct {
 	httpClient *http.Client
-	meURL      string
 	secretKey  string
 	sendURL    string
 }
@@ -56,61 +53,12 @@ type TransactionStatusResult struct {
 	RawJSON         string
 }
 
-func NewClient(meURL string, sendURL string, secretKey string) *Client {
+func NewClient(sendURL string, secretKey string) *Client {
 	return &Client{
 		httpClient: &http.Client{Timeout: 30 * time.Second},
-		meURL:      meURL,
 		secretKey:  secretKey,
 		sendURL:    sendURL,
 	}
-}
-
-func (c *Client) VerifyAuthToken(ctx context.Context, authToken string) (store.ThirdwebIdentity, error) {
-	authToken = strings.TrimSpace(authToken)
-	if authToken == "" {
-		return store.ThirdwebIdentity{}, errors.New("missing thirdweb auth token")
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.meURL, nil)
-	if err != nil {
-		return store.ThirdwebIdentity{}, err
-	}
-	req.Header.Set("Authorization", "Bearer "+authToken)
-	req.Header.Set("x-secret-key", c.secretKey)
-	req.Header.Set("Accept", "application/json")
-
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return store.ThirdwebIdentity{}, err
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return store.ThirdwebIdentity{}, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return store.ThirdwebIdentity{}, fmt.Errorf("thirdweb token verification failed: status %d", resp.StatusCode)
-	}
-
-	var payload any
-	if err := json.Unmarshal(body, &payload); err != nil {
-		return store.ThirdwebIdentity{}, fmt.Errorf("invalid thirdweb response: %w", err)
-	}
-
-	identity := store.ThirdwebIdentity{
-		WalletAddress:  strings.ToLower(findEVMAddress(payload)),
-		ThirdwebUserID: findStringByKeys(payload, "userId", "user_id", "id", "sub"),
-		AuthProvider:   findStringByKeys(payload, "authProvider", "auth_provider", "type", "strategy"),
-		Email:          findStringByKeys(payload, "email"),
-		Phone:          findStringByKeys(payload, "phone", "phoneNumber", "phone_number"),
-		RawJSON:        string(body),
-	}
-	if identity.WalletAddress == "" {
-		return store.ThirdwebIdentity{}, errors.New("verified thirdweb response did not include an EVM wallet address")
-	}
-
-	return identity, nil
 }
 
 func (c *Client) SendToken(ctx context.Context, request SendTokenRequest) (SendTokenResult, error) {
@@ -183,7 +131,7 @@ func (c *Client) SendToken(ctx context.Context, request SendTokenRequest) (SendT
 		return SendTokenResult{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return SendTokenResult{}, fmt.Errorf("thirdweb token send failed: status %d: %s", resp.StatusCode, string(responseBody))
+		return SendTokenResult{}, fmt.Errorf("walletops token send failed: status %d: %s", resp.StatusCode, string(responseBody))
 	}
 
 	var payloadResponse struct {
@@ -192,7 +140,7 @@ func (c *Client) SendToken(ctx context.Context, request SendTokenRequest) (SendT
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(responseBody, &payloadResponse); err != nil {
-		return SendTokenResult{}, fmt.Errorf("invalid thirdweb send response: %w", err)
+		return SendTokenResult{}, fmt.Errorf("invalid walletops send response: %w", err)
 	}
 
 	return SendTokenResult{
@@ -226,7 +174,7 @@ func (c *Client) TransactionStatus(ctx context.Context, transactionID string) (T
 		return TransactionStatusResult{}, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return TransactionStatusResult{}, fmt.Errorf("thirdweb transaction status failed: status %d: %s", resp.StatusCode, string(responseBody))
+		return TransactionStatusResult{}, fmt.Errorf("walletops transaction status failed: status %d: %s", resp.StatusCode, string(responseBody))
 	}
 
 	var payload struct {
@@ -246,7 +194,7 @@ func (c *Client) TransactionStatus(ctx context.Context, transactionID string) (T
 		} `json:"result"`
 	}
 	if err := json.Unmarshal(responseBody, &payload); err != nil {
-		return TransactionStatusResult{}, fmt.Errorf("invalid thirdweb transaction status response: %w", err)
+		return TransactionStatusResult{}, fmt.Errorf("invalid walletops transaction status response: %w", err)
 	}
 
 	errorMessage := strings.TrimSpace(payload.Result.ErrorMessage)
@@ -301,64 +249,4 @@ func TokenQuantity(amount string, decimals int) (string, error) {
 		return "", errors.New("amount must be greater than zero")
 	}
 	return value.String(), nil
-}
-
-func findEVMAddress(value any) string {
-	switch typed := value.(type) {
-	case map[string]any:
-		for _, key := range []string{"walletAddress", "wallet_address", "address"} {
-			if candidate, ok := typed[key].(string); ok && evmAddressPattern.MatchString(candidate) {
-				return candidate
-			}
-		}
-		for _, child := range typed {
-			if found := findEVMAddress(child); found != "" {
-				return found
-			}
-		}
-	case []any:
-		for _, child := range typed {
-			if found := findEVMAddress(child); found != "" {
-				return found
-			}
-		}
-	case string:
-		if evmAddressPattern.MatchString(typed) {
-			return typed
-		}
-	}
-	return ""
-}
-
-func findStringByKeys(value any, keys ...string) string {
-	allowed := map[string]struct{}{}
-	for _, key := range keys {
-		allowed[strings.ToLower(key)] = struct{}{}
-	}
-	return findStringByKeySet(value, allowed)
-}
-
-func findStringByKeySet(value any, keys map[string]struct{}) string {
-	switch typed := value.(type) {
-	case map[string]any:
-		for key, child := range typed {
-			if _, ok := keys[strings.ToLower(key)]; ok {
-				if text, ok := child.(string); ok {
-					return text
-				}
-			}
-		}
-		for _, child := range typed {
-			if found := findStringByKeySet(child, keys); found != "" {
-				return found
-			}
-		}
-	case []any:
-		for _, child := range typed {
-			if found := findStringByKeySet(child, keys); found != "" {
-				return found
-			}
-		}
-	}
-	return ""
 }

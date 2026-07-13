@@ -19,7 +19,7 @@ import (
 	"github.com/techbudol1/budol-api/internal/newsagent"
 	"github.com/techbudol1/budol-api/internal/session"
 	"github.com/techbudol1/budol-api/internal/store"
-	"github.com/techbudol1/budol-api/internal/thirdweb"
+	"github.com/techbudol1/budol-api/internal/walletops"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -37,7 +37,7 @@ type Server struct {
 	gmrEngine            *gmrengine.Client
 	newsAgent            *newsagent.Agent
 	store                store.AdminStore
-	thirdweb             *thirdweb.Client
+	walletops            *walletops.Client
 	sessions             session.Manager
 	walletBalanceCache   map[string]walletBalanceCacheEntry
 	walletBalanceCacheMu *sync.Mutex
@@ -243,7 +243,7 @@ const airdropConfirmText = "CONFIRM AIRDROP"
 const burnConfirmText = "CONFIRM BURN"
 const budolTokenContractSetting = "budol_token_contract"
 
-func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb.Client, gmrEngineClient *gmrengine.Client, newsAgent *newsagent.Agent, sessions session.Manager) *fiber.App {
+func New(cfg config.Config, userStore store.AdminStore, walletopsClient *walletops.Client, gmrEngineClient *gmrengine.Client, newsAgent *newsagent.Agent, sessions session.Manager) *fiber.App {
 	server := Server{
 		cfg:                  cfg,
 		collateralMu:         &sync.Mutex{},
@@ -252,7 +252,7 @@ func New(cfg config.Config, userStore store.AdminStore, thirdwebClient *thirdweb
 		gmrEngine:            gmrEngineClient,
 		newsAgent:            newsAgent,
 		store:                userStore,
-		thirdweb:             thirdwebClient,
+		walletops:            walletopsClient,
 		sessions:             sessions,
 		walletBalanceCache:   map[string]walletBalanceCacheEntry{},
 		walletBalanceCacheMu: &sync.Mutex{},
@@ -531,7 +531,7 @@ func (s Server) grantWelcomeTokens(c *fiber.Ctx, user store.User) {
 		return
 	}
 
-	quantity, err := thirdweb.TokenQuantity(s.cfg.WelcomeTokenAmount, s.cfg.WelcomeTokenDecimals)
+	quantity, err := walletops.TokenQuantity(s.cfg.WelcomeTokenAmount, s.cfg.WelcomeTokenDecimals)
 	if err != nil {
 		return
 	}
@@ -546,7 +546,7 @@ func (s Server) grantWelcomeTokens(c *fiber.Ctx, user store.User) {
 	if err != nil {
 		return
 	}
-	if !created && !shouldRetryTokenGrant(c, s.thirdweb, grant) {
+	if !created && !shouldRetryTokenGrant(c, s.walletops, grant) {
 		return
 	}
 
@@ -907,7 +907,7 @@ func (s Server) createGaslessTradeEscrow(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 	}
 	owner := strings.ToLower(strings.TrimSpace(request.Owner))
-	if owner == "" || !thirdweb.IsEVMAddress(owner) {
+	if owner == "" || !walletops.IsEVMAddress(owner) {
 		return fiber.NewError(fiber.StatusBadRequest, "valid owner is required")
 	}
 	if owner != strings.ToLower(strings.TrimSpace(user.WalletAddress)) {
@@ -1128,8 +1128,8 @@ func (s Server) publicCollateralStatus(c *fiber.Ctx) error {
 
 func (s Server) smartWalletConfig(c *fiber.Ctx) error {
 	configured := s.cfg.SmartWalletEnabled &&
-		thirdweb.IsEVMAddress(s.cfg.SmartWalletEntryPointAddress) &&
-		thirdweb.IsEVMAddress(s.cfg.SmartWalletFactoryAddress) &&
+		walletops.IsEVMAddress(s.cfg.SmartWalletEntryPointAddress) &&
+		walletops.IsEVMAddress(s.cfg.SmartWalletFactoryAddress) &&
 		strings.TrimSpace(s.cfg.SmartWalletBundlerURL) != ""
 
 	return c.JSON(fiber.Map{
@@ -1144,7 +1144,7 @@ func (s Server) smartWalletConfig(c *fiber.Ctx) error {
 			BundlerURL:        s.cfg.SmartWalletBundlerURL,
 			PaymasterAddress:  strings.ToLower(s.cfg.SmartWalletPaymasterAddress),
 			PaymasterURL:      s.cfg.SmartWalletPaymasterURL,
-			GasSponsored:      s.cfg.SmartWalletGasSponsored && thirdweb.IsEVMAddress(s.cfg.SmartWalletPaymasterAddress) && strings.TrimSpace(s.cfg.SmartWalletPaymasterURL) != "",
+			GasSponsored:      s.cfg.SmartWalletGasSponsored && walletops.IsEVMAddress(s.cfg.SmartWalletPaymasterAddress) && strings.TrimSpace(s.cfg.SmartWalletPaymasterURL) != "",
 			AccountType:       "SimpleAccount",
 			Mode:              "erc4337",
 		},
@@ -1157,7 +1157,7 @@ func (s Server) tradeConfig(c *fiber.Ctx) error {
 	if strings.TrimSpace(tokenContract) == "" {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "BUDOL token contract is not configured")
 	}
-	if !thirdweb.IsEVMAddress(tokenContract) {
+	if !walletops.IsEVMAddress(tokenContract) {
 		return fiber.NewError(fiber.StatusServiceUnavailable, "BUDOL token contract is invalid")
 	}
 	projectWallet, err := s.projectWalletAddress(c.Context())
@@ -1208,7 +1208,7 @@ func (s Server) engineGasFreeConfig(ctx context.Context) (bool, string) {
 		return false, ""
 	}
 	wallet, ok, err := s.gmrEngine.DefaultAdminWallet(ctx)
-	if err != nil || !ok || !thirdweb.IsEVMAddress(wallet.Address) {
+	if err != nil || !ok || !walletops.IsEVMAddress(wallet.Address) {
 		return false, ""
 	}
 	return true, wallet.Address
@@ -1401,7 +1401,7 @@ func (s Server) cashoutPosition(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	payoutStatus, payoutError := s.waitForThirdwebTransactionStatus(c, result.TransactionIDs)
+	payoutStatus, payoutError := s.waitForWalletOpsTransactionStatus(c, result.TransactionIDs)
 
 	cashout, err := s.store.CashoutPosition(c.Context(), user.ID, store.CashoutInput{
 		PollID: request.PollID,
@@ -1443,7 +1443,7 @@ func (s Server) verifyTradeEscrow(c *fiber.Ctx, user store.User, request TradeRe
 	}
 	tradingFeeBps := s.engineTradingFeeBps(c.Context())
 	escrowAmount := tradeEscrowTotal(request.Amount, tradingFeeBps)
-	quantity, err := thirdweb.TokenQuantity(settlementAmountString(escrowAmount), s.cfg.WelcomeTokenDecimals)
+	quantity, err := walletops.TokenQuantity(settlementAmountString(escrowAmount), s.cfg.WelcomeTokenDecimals)
 	if err != nil {
 		return tradeEscrowVerification{}, fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
@@ -1474,13 +1474,13 @@ func (s Server) expectedEscrowFromAddress(ctx context.Context, user store.User, 
 	if requestedFrom == "" || strings.EqualFold(requestedFrom, userWallet) {
 		return userWallet, nil
 	}
-	if !thirdweb.IsEVMAddress(requestedFrom) {
+	if !walletops.IsEVMAddress(requestedFrom) {
 		return "", fiber.NewError(fiber.StatusBadRequest, "invalid escrowFromAddress")
 	}
 	if !s.cfg.SmartWalletEnabled {
 		return "", fiber.NewError(fiber.StatusBadRequest, "smart wallet escrow is not enabled")
 	}
-	if !thirdweb.IsEVMAddress(s.cfg.SmartWalletFactoryAddress) {
+	if !walletops.IsEVMAddress(s.cfg.SmartWalletFactoryAddress) {
 		return "", fiber.NewError(fiber.StatusServiceUnavailable, "smart account factory is not configured")
 	}
 	expected, err := s.evm.SimpleAccountAddress(ctx, s.cfg.SmartWalletFactoryAddress, userWallet, 0)
@@ -1659,7 +1659,7 @@ func (s Server) walletBalance(c *fiber.Ctx) error {
 		nativeCh <- nativeResult{balance: balance, err: err}
 	}()
 
-	if thirdweb.IsEVMAddress(privacyToken) {
+	if walletops.IsEVMAddress(privacyToken) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -1694,7 +1694,7 @@ func (s Server) walletBalance(c *fiber.Ctx) error {
 	wg.Wait()
 	close(nativeCh)
 	close(budolCh)
-	if thirdweb.IsEVMAddress(privacyToken) {
+	if walletops.IsEVMAddress(privacyToken) {
 		close(privacyCh)
 	}
 
@@ -1875,7 +1875,7 @@ func (s Server) walletHistory(c *fiber.Ctx) error {
 	warnings := []string{}
 	seenTokens := map[string]struct{}{}
 	for _, token := range tokenRequests {
-		if !thirdweb.IsEVMAddress(token.address) {
+		if !walletops.IsEVMAddress(token.address) {
 			continue
 		}
 		if _, seen := seenTokens[token.address]; seen {
@@ -2045,7 +2045,7 @@ func (s Server) adminReconcileTradeEscrow(c *fiber.Ctx) error {
 	if amount <= 0 {
 		amount = trade.Amount
 	}
-	quantity, err := thirdweb.TokenQuantity(settlementAmountString(amount), s.cfg.WelcomeTokenDecimals)
+	quantity, err := walletops.TokenQuantity(settlementAmountString(amount), s.cfg.WelcomeTokenDecimals)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
@@ -2095,7 +2095,7 @@ func (s Server) adminRetryPrivateClaimPayout(c *fiber.Ctx) error {
 	if len(trade.PayoutTransactionIDs) > 0 {
 		return fiber.NewError(fiber.StatusConflict, "failed claim has payout transaction IDs and must be reconciled before retry")
 	}
-	if !thirdweb.IsEVMAddress(trade.UserWalletAddress) {
+	if !walletops.IsEVMAddress(trade.UserWalletAddress) {
 		return fiber.NewError(fiber.StatusBadRequest, "trade owner wallet is invalid")
 	}
 
@@ -2106,7 +2106,7 @@ func (s Server) adminRetryPrivateClaimPayout(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	payoutStatus, payoutError := s.waitForThirdwebTransactionStatus(c, result.TransactionIDs)
+	payoutStatus, payoutError := s.waitForWalletOpsTransactionStatus(c, result.TransactionIDs)
 	claim, updatedTrade, err := s.store.CompletePrivateClaimPayout(c.Context(), trade.UserID, trade.PrivateClaimID, result.TransactionIDs, payoutStatus, payoutError)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "payout was submitted but its claim record could not be updated")
@@ -2138,7 +2138,7 @@ func (s Server) adminReconcilePrivateClaimPayout(c *fiber.Ctx) error {
 	if trade.PrivateClaimID == "" || len(trade.PayoutTransactionIDs) == 0 {
 		return fiber.NewError(fiber.StatusBadRequest, "trade has no private claim payout transaction to reconcile")
 	}
-	payoutStatus, payoutError, transactionHash := s.thirdwebTransactionStatus(c, trade.PayoutTransactionIDs[0])
+	payoutStatus, payoutError, transactionHash := s.walletopsTransactionStatus(c, trade.PayoutTransactionIDs[0])
 	claim, updatedTrade, err := s.store.CompletePrivateClaimPayout(c.Context(), trade.UserID, trade.PrivateClaimID, trade.PayoutTransactionIDs, payoutStatus, payoutError)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to update the private claim payout status")
@@ -2425,7 +2425,7 @@ func (s Server) adminRetrySettlementPayout(c *fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	payoutStatus, payoutError := s.waitForThirdwebTransactionStatus(c, result.TransactionIDs)
+	payoutStatus, payoutError := s.waitForWalletOpsTransactionStatus(c, result.TransactionIDs)
 	settlement, err := s.store.RecordSettlementPayoutRetry(c.Context(), c.Params("id"), result.TransactionIDs, payoutStatus, payoutError)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to record payout retry")
@@ -2459,7 +2459,7 @@ func (s Server) adminReconcileSettlementPayout(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "no settlement payout transaction IDs to reconcile")
 	}
 
-	payoutStatus, payoutError, transactionHash := s.thirdwebTransactionStatus(c, transactionIDs[0])
+	payoutStatus, payoutError, transactionHash := s.walletopsTransactionStatus(c, transactionIDs[0])
 	poll, err := s.store.UpdateSettlementPayoutReconciliation(c.Context(), c.Params("id"), payoutStatus, payoutError, transactionHash)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to update payout reconciliation")
@@ -2694,7 +2694,7 @@ func (s Server) adminUpdatePrivacyAccessSettings(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 	}
 	collector := strings.ToLower(strings.TrimSpace(request.CollectorAddress))
-	if collector != "" && !thirdweb.IsEVMAddress(collector) {
+	if collector != "" && !walletops.IsEVMAddress(collector) {
 		return fiber.NewError(fiber.StatusBadRequest, "collectorAddress must be a valid EVM address")
 	}
 	fees := map[string]string{
@@ -2737,7 +2737,7 @@ func (s Server) adminUpdateWalletTokenContract(c *fiber.Ctx) error {
 		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
 	}
 	tokenAddress := strings.ToLower(strings.TrimSpace(request.TokenAddress))
-	if !thirdweb.IsEVMAddress(tokenAddress) {
+	if !walletops.IsEVMAddress(tokenAddress) {
 		return fiber.NewError(fiber.StatusBadRequest, "token contract must be a valid EVM address")
 	}
 	s.collateralMu.Lock()
@@ -2777,7 +2777,7 @@ func (s Server) adminRetryWelcomeGrants(c *fiber.Ctx) error {
 	if s.activeTokenContract(c.Context()) == "" || s.cfg.WelcomeTokenAmount == "" {
 		return fiber.NewError(fiber.StatusBadRequest, "welcome token grant is not configured")
 	}
-	quantity, err := thirdweb.TokenQuantity(s.cfg.WelcomeTokenAmount, s.cfg.WelcomeTokenDecimals)
+	quantity, err := walletops.TokenQuantity(s.cfg.WelcomeTokenAmount, s.cfg.WelcomeTokenDecimals)
 	if err != nil {
 		return fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
@@ -2926,7 +2926,7 @@ func (s Server) requireWalletConfig(ctx context.Context) (string, error) {
 	if strings.TrimSpace(tokenContract) == "" {
 		return "", errors.New("token contract is not configured")
 	}
-	if !thirdweb.IsEVMAddress(tokenContract) {
+	if !walletops.IsEVMAddress(tokenContract) {
 		return "", errors.New("token contract is invalid")
 	}
 	if s.cfg.WelcomeTokenDecimals < 0 {
@@ -2941,23 +2941,23 @@ func (s Server) requireWalletConfig(ctx context.Context) (string, error) {
 	return tokenContract, nil
 }
 
-func (s Server) sendWalletTokens(c *fiber.Ctx, inputs []walletRecipientInput) (thirdweb.SendTokenResult, string, error) {
+func (s Server) sendWalletTokens(c *fiber.Ctx, inputs []walletRecipientInput) (walletops.SendTokenResult, string, error) {
 	return s.sendWalletTokensWithRelease(c, inputs, 0)
 }
 
-func (s Server) sendWalletTokensWithRelease(c *fiber.Ctx, inputs []walletRecipientInput, liabilityRelease float64) (thirdweb.SendTokenResult, string, error) {
+func (s Server) sendWalletTokensWithRelease(c *fiber.Ctx, inputs []walletRecipientInput, liabilityRelease float64) (walletops.SendTokenResult, string, error) {
 	s.collateralMu.Lock()
 	defer s.collateralMu.Unlock()
 	return s.sendWalletTokensLocked(c, inputs, liabilityRelease)
 }
 
-func (s Server) sendWalletTokensLocked(c *fiber.Ctx, inputs []walletRecipientInput, liabilityRelease float64) (thirdweb.SendTokenResult, string, error) {
+func (s Server) sendWalletTokensLocked(c *fiber.Ctx, inputs []walletRecipientInput, liabilityRelease float64) (walletops.SendTokenResult, string, error) {
 	tokenContract, err := s.requireWalletConfig(c.Context())
 	if err != nil {
-		return thirdweb.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadRequest, err.Error())
+		return walletops.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadRequest, err.Error())
 	}
 	if len(inputs) == 0 {
-		return thirdweb.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadRequest, "add at least one recipient")
+		return walletops.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadRequest, "add at least one recipient")
 	}
 
 	transactionIDs := []string{}
@@ -2965,27 +2965,27 @@ func (s Server) sendWalletTokensLocked(c *fiber.Ctx, inputs []walletRecipientInp
 	totalOutgoing := 0.0
 	for _, input := range inputs {
 		address := strings.TrimSpace(input.Address)
-		if !thirdweb.IsEVMAddress(address) {
-			return thirdweb.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadRequest, "invalid recipient address")
+		if !walletops.IsEVMAddress(address) {
+			return walletops.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadRequest, "invalid recipient address")
 		}
-		quantity, err := thirdweb.TokenQuantity(input.Amount, s.cfg.WelcomeTokenDecimals)
+		quantity, err := walletops.TokenQuantity(input.Amount, s.cfg.WelcomeTokenDecimals)
 		if err != nil {
-			return thirdweb.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadRequest, err.Error())
+			return walletops.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadRequest, err.Error())
 		}
 		if totalQuantity == "" {
 			totalQuantity = quantity
 		}
 		amount, err := strconv.ParseFloat(strings.TrimSpace(input.Amount), 64)
 		if err != nil || amount <= 0 {
-			return thirdweb.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadRequest, "invalid token amount")
+			return walletops.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadRequest, "invalid token amount")
 		}
 		totalOutgoing += amount
 	}
 	if err := s.ensureCollateralOutflow(c.Context(), totalOutgoing, liabilityRelease); err != nil {
 		if errors.Is(err, errUnderCollateralized) {
-			return thirdweb.SendTokenResult{}, "", fiber.NewError(fiber.StatusConflict, "transfer rejected: funds are reserved to guarantee market payouts")
+			return walletops.SendTokenResult{}, "", fiber.NewError(fiber.StatusConflict, "transfer rejected: funds are reserved to guarantee market payouts")
 		}
-		return thirdweb.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadGateway, "failed to verify payout collateral")
+		return walletops.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadGateway, "failed to verify payout collateral")
 	}
 
 	for _, input := range inputs {
@@ -2998,16 +2998,16 @@ func (s Server) sendWalletTokensLocked(c *fiber.Ctx, inputs []walletRecipientInp
 			Recipient:       address,
 		})
 		if err != nil {
-			return thirdweb.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadGateway, err.Error())
+			return walletops.SendTokenResult{}, "", fiber.NewError(fiber.StatusBadGateway, err.Error())
 		}
 		transactionIDs = append(transactionIDs, result.TransactionIDs...)
 	}
-	return thirdweb.SendTokenResult{TransactionIDs: transactionIDs}, totalQuantity, nil
+	return walletops.SendTokenResult{TransactionIDs: transactionIDs}, totalQuantity, nil
 }
 
-func (s Server) sendSettlementPayoutsLocked(c *fiber.Ctx, preview store.SettlementPreview) (thirdweb.SendTokenResult, error) {
+func (s Server) sendSettlementPayoutsLocked(c *fiber.Ctx, preview store.SettlementPreview) (walletops.SendTokenResult, error) {
 	if len(preview.Recipients) == 0 || preview.PayoutRequired <= 0 {
-		return thirdweb.SendTokenResult{}, nil
+		return walletops.SendTokenResult{}, nil
 	}
 	inputs := make([]walletRecipientInput, 0, len(preview.Recipients))
 	for _, recipient := range preview.Recipients {
@@ -3102,7 +3102,7 @@ func (s Server) welcomeGrantWalletHealth(c *fiber.Ctx) fiber.Map {
 	tokenContract := s.activeTokenContract(c.Context())
 	quantity := ""
 	if s.cfg.WelcomeTokenAmount != "" {
-		if parsed, err := thirdweb.TokenQuantity(s.cfg.WelcomeTokenAmount, s.cfg.WelcomeTokenDecimals); err == nil {
+		if parsed, err := walletops.TokenQuantity(s.cfg.WelcomeTokenAmount, s.cfg.WelcomeTokenDecimals); err == nil {
 			quantity = parsed
 		}
 	}
@@ -3154,7 +3154,7 @@ func (s Server) welcomeGrantWalletHealth(c *fiber.Ctx) fiber.Map {
 	return health
 }
 
-func (s Server) waitForThirdwebTransactionStatus(c *fiber.Ctx, transactionIDs []string) (string, string) {
+func (s Server) waitForWalletOpsTransactionStatus(c *fiber.Ctx, transactionIDs []string) (string, string) {
 	if len(transactionIDs) == 0 {
 		return "submitted", ""
 	}
@@ -3176,14 +3176,14 @@ func (s Server) waitForThirdwebTransactionStatus(c *fiber.Ctx, transactionIDs []
 			}
 			continue
 		}
-		status, err := s.thirdweb.TransactionStatus(c.Context(), transactionIDs[0])
+		status, err := s.walletops.TransactionStatus(c.Context(), transactionIDs[0])
 		if err != nil {
 			return "submitted", err.Error()
 		}
 		switch status.Status {
 		case "FAILED", "CANCELLED":
 			if status.ErrorMessage == "" {
-				status.ErrorMessage = "thirdweb transaction failed"
+				status.ErrorMessage = "walletops transaction failed"
 			}
 			return "failed", status.ErrorMessage
 		case "CONFIRMED", "MINED":
@@ -3195,7 +3195,7 @@ func (s Server) waitForThirdwebTransactionStatus(c *fiber.Ctx, transactionIDs []
 	return "submitted", ""
 }
 
-func (s Server) thirdwebTransactionStatus(c *fiber.Ctx, transactionID string) (string, string, string) {
+func (s Server) walletopsTransactionStatus(c *fiber.Ctx, transactionID string) (string, string, string) {
 	if isBytes32Hex(transactionID) {
 		status, err := s.evm.TransactionReceiptStatus(c.Context(), transactionID)
 		if err != nil {
@@ -3209,7 +3209,7 @@ func (s Server) thirdwebTransactionStatus(c *fiber.Ctx, transactionID string) (s
 		}
 		return "submitted", "", transactionID
 	}
-	status, err := s.thirdweb.TransactionStatus(c.Context(), transactionID)
+	status, err := s.walletops.TransactionStatus(c.Context(), transactionID)
 	if err != nil {
 		return "submitted", err.Error(), ""
 	}
@@ -3217,7 +3217,7 @@ func (s Server) thirdwebTransactionStatus(c *fiber.Ctx, transactionID string) (s
 	case "FAILED", "CANCELLED":
 		errorMessage := status.ErrorMessage
 		if errorMessage == "" {
-			errorMessage = "thirdweb transaction failed"
+			errorMessage = "walletops transaction failed"
 		}
 		return "failed", errorMessage, status.TransactionHash
 	case "CONFIRMED", "MINED":
@@ -3233,7 +3233,7 @@ func (s Server) thirdwebTransactionStatus(c *fiber.Ctx, transactionID string) (s
 	}
 }
 
-func shouldRetryTokenGrant(c *fiber.Ctx, client *thirdweb.Client, grant store.TokenGrant) bool {
+func shouldRetryTokenGrant(c *fiber.Ctx, client *walletops.Client, grant store.TokenGrant) bool {
 	switch grant.Status {
 	case "sent":
 		return false
@@ -3261,7 +3261,7 @@ func shouldRetryTokenGrant(c *fiber.Ctx, client *thirdweb.Client, grant store.To
 	}
 }
 
-func walletActionResponse(action string, recipientCount int, quantity string, result thirdweb.SendTokenResult) fiber.Map {
+func walletActionResponse(action string, recipientCount int, quantity string, result walletops.SendTokenResult) fiber.Map {
 	return fiber.Map{
 		"action":         action,
 		"ok":             true,

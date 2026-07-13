@@ -1,4 +1,4 @@
-package thirdweb
+package walletops
 
 import (
 	"bytes"
@@ -8,41 +8,6 @@ import (
 	"net/http"
 	"testing"
 )
-
-func TestFindEVMAddressNestedPayload(t *testing.T) {
-	payload := map[string]any{
-		"user": map[string]any{
-			"id": "thirdweb-user-1",
-			"wallet": map[string]any{
-				"address": "0x1111111111111111111111111111111111111111",
-			},
-		},
-	}
-
-	got := findEVMAddress(payload)
-	want := "0x1111111111111111111111111111111111111111"
-	if got != want {
-		t.Fatalf("expected %s, got %s", want, got)
-	}
-}
-
-func TestFindStringByKeysNestedPayload(t *testing.T) {
-	payload := map[string]any{
-		"profiles": []any{
-			map[string]any{
-				"type":  "google",
-				"email": "juan@example.com",
-			},
-		},
-	}
-
-	if got := findStringByKeys(payload, "email"); got != "juan@example.com" {
-		t.Fatalf("expected email, got %s", got)
-	}
-	if got := findStringByKeys(payload, "type"); got != "google" {
-		t.Fatalf("expected auth provider, got %s", got)
-	}
-}
 
 func TestTokenQuantity(t *testing.T) {
 	got, err := TokenQuantity("100", 18)
@@ -64,7 +29,7 @@ func TestTokenQuantityRejectsNonPositive(t *testing.T) {
 
 func TestSendTokenSupportsMultipleRecipients(t *testing.T) {
 	client := &Client{
-		httpClient: &http.Client{Transport: thirdwebRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		httpClient: &http.Client{Transport: walletopsRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 			var payload struct {
 				ChainID      int `json:"chainId"`
 				TokenAddress string
@@ -85,7 +50,7 @@ func TestSendTokenSupportsMultipleRecipients(t *testing.T) {
 				Body:       io.NopCloser(bytes.NewBufferString(`{"result":{"transactionIds":["0xabc"]}}`)),
 			}, nil
 		})},
-		sendURL:   "http://thirdweb.test/send",
+		sendURL:   "http://walletops.test/send",
 		secretKey: "secret",
 	}
 	result, err := client.SendToken(context.Background(), SendTokenRequest{
@@ -106,7 +71,7 @@ func TestSendTokenSupportsMultipleRecipients(t *testing.T) {
 
 func TestTransactionStatusReturnsFailureDetails(t *testing.T) {
 	client := &Client{
-		httpClient: &http.Client{Transport: thirdwebRoundTripFunc(func(r *http.Request) (*http.Response, error) {
+		httpClient: &http.Client{Transport: walletopsRoundTripFunc(func(r *http.Request) (*http.Response, error) {
 			if r.URL.Path != "/v1/transactions/tx-1" {
 				t.Fatalf("unexpected path: %s", r.URL.Path)
 			}
@@ -131,7 +96,7 @@ func TestTransactionStatusReturnsFailureDetails(t *testing.T) {
 				}`)),
 			}, nil
 		})},
-		sendURL:   "https://api.thirdweb.com/v1/wallets/send",
+		sendURL:   "https://api.walletops.com/v1/wallets/send",
 		secretKey: "secret",
 	}
 
@@ -147,8 +112,8 @@ func TestTransactionStatusReturnsFailureDetails(t *testing.T) {
 	}
 }
 
-type thirdwebRoundTripFunc func(*http.Request) (*http.Response, error)
+type walletopsRoundTripFunc func(*http.Request) (*http.Response, error)
 
-func (f thirdwebRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+func (f walletopsRoundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) {
 	return f(r)
 }
