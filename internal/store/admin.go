@@ -766,7 +766,35 @@ RETURN count(p) AS normalized
 			if err := liquidityRows.Err(); err != nil {
 				return nil, err
 			}
-			return automated + normalized, nil
+			reconcileRows, err := tx.Run(ctx, `
+MATCH (p:Poll)
+WHERE p.status = "published"
+OPTIONAL MATCH (t:Trade {status: "open"})-[:ON_POLL]->(p)
+WITH p,
+  sum(CASE WHEN t.side = "yes" THEN coalesce(t.shares, 0.0) ELSE 0.0 END) AS openYesShares,
+  sum(CASE WHEN t.side = "no" THEN coalesce(t.shares, 0.0) ELSE 0.0 END) AS openNoShares
+WITH p, coalesce(openYesShares, 0.0) AS openYesShares, coalesce(openNoShares, 0.0) AS openNoShares
+WHERE coalesce(p.marketMakerCollected, 0.0) > 0.0
+  AND (abs(coalesce(p.yesShares, 0.0) - openYesShares) > 0.01 OR abs(coalesce(p.noShares, 0.0) - openNoShares) > 0.01)
+SET
+  p.yesShares = openYesShares,
+  p.noShares = openNoShares,
+  p.yesPercent = CASE WHEN openYesShares = 0.0 AND openNoShares = 0.0 THEN 50 ELSE coalesce(p.yesPercent, 50) END,
+  p.noPercent = CASE WHEN openYesShares = 0.0 AND openNoShares = 0.0 THEN 50 ELSE coalesce(p.noPercent, 50) END,
+  p.updatedAt = $now
+RETURN count(p) AS reconciled
+`, map[string]any{"now": now})
+			if err != nil {
+				return nil, err
+			}
+			reconciled := int64(0)
+			if reconcileRows.Next(ctx) {
+				reconciled = intValue(reconcileRows.Record(), "reconciled")
+			}
+			if err := reconcileRows.Err(); err != nil {
+				return nil, err
+			}
+			return automated + normalized + reconciled, nil
 		}
 		return int64(0), rows.Err()
 	})
@@ -1146,7 +1174,10 @@ func pollFromRecord(record *neo4j.Record) Poll {
 	yesShares := roundMoney(floatValue(record, "yesShares"))
 	noShares := roundMoney(floatValue(record, "noShares"))
 	liquidity := roundMoney(floatValue(record, "liquidity"))
-	if marketMakerCollected > 0 && (yesShares != 0 || noShares != 0) {
+	if marketMakerCollected > 0 && yesShares == 0 && noShares == 0 {
+		yesPercent = 50
+		noPercent = 50
+	} else if marketMakerCollected > 0 && (yesShares != 0 || noShares != 0) {
 		yesPercent = priceToCents(lmsrPrice(yesShares, noShares, liquidity, "yes"))
 		noPercent = 100 - yesPercent
 	}
