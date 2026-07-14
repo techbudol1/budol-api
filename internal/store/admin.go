@@ -1109,6 +1109,11 @@ func pollClassificationFromRecord(record *neo4j.Record) PollClassification {
 }
 
 func pollFromRecord(record *neo4j.Record) Poll {
+	marketMakerCollected := roundMoney(floatValue(record, "marketMakerCollected"))
+	volume := stringValue(record, "volume")
+	if marketMakerCollected > 0 {
+		volume = formatPollVolume(marketMakerCollected)
+	}
 	return Poll{
 		ID:                             stringValue(record, "id"),
 		Slug:                           stringValue(record, "slug"),
@@ -1128,7 +1133,7 @@ func pollFromRecord(record *neo4j.Record) Poll {
 		MarketChoiceIndex:              intValue(record, "marketChoiceIndex"),
 		YesPercent:                     intValue(record, "yesPercent"),
 		NoPercent:                      intValue(record, "noPercent"),
-		Volume:                         stringValue(record, "volume"),
+		Volume:                         volume,
 		Change:                         stringValue(record, "change"),
 		Color:                          stringValue(record, "color"),
 		Hot:                            boolValue(record, "hot"),
@@ -1137,7 +1142,7 @@ func pollFromRecord(record *neo4j.Record) Poll {
 		Liquidity:                      roundMoney(floatValue(record, "liquidity")),
 		YesShares:                      roundMoney(floatValue(record, "yesShares")),
 		NoShares:                       roundMoney(floatValue(record, "noShares")),
-		MarketMakerCollected:           roundMoney(floatValue(record, "marketMakerCollected")),
+		MarketMakerCollected:           marketMakerCollected,
 		TradingFrozen:                  boolValue(record, "tradingFrozen"),
 		CommentsDisabled:               boolValue(record, "commentsDisabled"),
 		AuditReason:                    stringValue(record, "auditReason"),
@@ -1165,6 +1170,23 @@ func boolValue(record *neo4j.Record, key string) bool {
 	}
 	typed, ok := value.(bool)
 	return ok && typed
+}
+
+func formatPollVolume(amount float64) string {
+	amount = roundMoney(amount)
+	if amount <= 0 {
+		return "P0"
+	}
+	if amount >= 1000000 {
+		return fmt.Sprintf("P%.1fM", amount/1000000)
+	}
+	if amount >= 1000 {
+		return fmt.Sprintf("P%.1fK", amount/1000)
+	}
+	if math.Mod(amount, 1) == 0 {
+		return fmt.Sprintf("P%.0f", amount)
+	}
+	return fmt.Sprintf("P%.2f", amount)
 }
 
 func defaultString(value string, fallback string) string {
