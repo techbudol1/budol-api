@@ -12,7 +12,7 @@ import (
 	"github.com/neo4j/neo4j-go-driver/v5/neo4j"
 )
 
-const defaultMarketLiquidity = 5000.0
+const defaultMarketLiquidity = 500.0
 const minMarketPrice = 0.01
 const maxMarketPrice = 0.99
 
@@ -890,7 +890,7 @@ RETURN
   coalesce(p.yesPercent, 50) AS yesPercent,
   coalesce(p.yesShares, 0.0) AS yesShares,
   coalesce(p.noShares, 0.0) AS noShares,
-  coalesce(p.liquidity, 5000.0) AS liquidity,
+  coalesce(p.liquidity, 500.0) AS liquidity,
   p.yesShares IS NOT NULL AS marketStateExists
 `
 }
@@ -978,7 +978,7 @@ RETURN
   coalesce(p.yesPercent, 50) AS yesPercent,
   coalesce(p.yesShares, 0.0) AS yesShares,
   coalesce(p.noShares, 0.0) AS noShares,
-  coalesce(p.liquidity, 5000.0) AS liquidity,
+  coalesce(p.liquidity, 500.0) AS liquidity,
   p.yesShares IS NOT NULL AS marketStateExists,
   sum(coalesce(t.shares, 0.0)) AS positionShares,
   sum(coalesce(t.amount, 0.0)) AS positionAmount
@@ -1518,7 +1518,7 @@ RETURN
   p.slug AS pollSlug,
   coalesce(p.yesShares, 0.0) AS yesShares,
   coalesce(p.noShares, 0.0) AS noShares,
-  coalesce(p.liquidity, 5000.0) AS liquidity,
+  coalesce(p.liquidity, 500.0) AS liquidity,
   tradeCount AS tradeCount,
   holderCount AS holderCount,
   yesHolderCount AS yesHolderCount,

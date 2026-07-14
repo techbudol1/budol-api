@@ -739,7 +739,34 @@ RETURN count(p) AS automated
 			return nil, err
 		}
 		if rows.Next(ctx) {
-			return intValue(rows.Record(), "automated"), nil
+			automated := intValue(rows.Record(), "automated")
+			liquidityRows, err := tx.Run(ctx, `
+MATCH (p:Poll)
+WHERE p.status = "published"
+  AND coalesce(p.marketMakerCollected, 0.0) > 0.0
+  AND coalesce(p.marketMakerCollected, 0.0) <= 1000.0
+  AND coalesce(p.liquidity, 500.0) > 1000.0
+  AND coalesce(p.yesPercent, 50) = 50
+  AND coalesce(p.noPercent, 50) = 50
+SET
+  p.liquidity = $liquidity,
+  p.updatedAt = $now
+RETURN count(p) AS normalized
+`, map[string]any{
+				"liquidity": defaultMarketLiquidity,
+				"now":       now,
+			})
+			if err != nil {
+				return nil, err
+			}
+			normalized := int64(0)
+			if liquidityRows.Next(ctx) {
+				normalized = intValue(liquidityRows.Record(), "normalized")
+			}
+			if err := liquidityRows.Err(); err != nil {
+				return nil, err
+			}
+			return automated + normalized, nil
 		}
 		return int64(0), rows.Err()
 	})
@@ -1070,7 +1097,7 @@ RETURN
   coalesce(p.hot, false) AS hot,
   coalesce(p.featured, false) AS featured,
   coalesce(p.sortOrder, 0) AS sortOrder,
-  coalesce(p.liquidity, 5000.0) AS liquidity,
+  coalesce(p.liquidity, 500.0) AS liquidity,
   coalesce(p.yesShares, 0.0) AS yesShares,
   coalesce(p.noShares, 0.0) AS noShares,
   coalesce(p.marketMakerCollected, 0.0) AS marketMakerCollected,
@@ -1114,6 +1141,15 @@ func pollFromRecord(record *neo4j.Record) Poll {
 	if marketMakerCollected > 0 {
 		volume = formatPollVolume(marketMakerCollected)
 	}
+	yesPercent := intValue(record, "yesPercent")
+	noPercent := intValue(record, "noPercent")
+	yesShares := roundMoney(floatValue(record, "yesShares"))
+	noShares := roundMoney(floatValue(record, "noShares"))
+	liquidity := roundMoney(floatValue(record, "liquidity"))
+	if marketMakerCollected > 0 && (yesShares != 0 || noShares != 0) {
+		yesPercent = priceToCents(lmsrPrice(yesShares, noShares, liquidity, "yes"))
+		noPercent = 100 - yesPercent
+	}
 	return Poll{
 		ID:                             stringValue(record, "id"),
 		Slug:                           stringValue(record, "slug"),
@@ -1131,17 +1167,17 @@ func pollFromRecord(record *neo4j.Record) Poll {
 		MarketGroupTitle:               stringValue(record, "marketGroupTitle"),
 		MarketChoiceLabel:              stringValue(record, "marketChoiceLabel"),
 		MarketChoiceIndex:              intValue(record, "marketChoiceIndex"),
-		YesPercent:                     intValue(record, "yesPercent"),
-		NoPercent:                      intValue(record, "noPercent"),
+		YesPercent:                     yesPercent,
+		NoPercent:                      noPercent,
 		Volume:                         volume,
 		Change:                         stringValue(record, "change"),
 		Color:                          stringValue(record, "color"),
 		Hot:                            boolValue(record, "hot"),
 		Featured:                       boolValue(record, "featured"),
 		SortOrder:                      intValue(record, "sortOrder"),
-		Liquidity:                      roundMoney(floatValue(record, "liquidity")),
-		YesShares:                      roundMoney(floatValue(record, "yesShares")),
-		NoShares:                       roundMoney(floatValue(record, "noShares")),
+		Liquidity:                      liquidity,
+		YesShares:                      yesShares,
+		NoShares:                       noShares,
 		MarketMakerCollected:           marketMakerCollected,
 		TradingFrozen:                  boolValue(record, "tradingFrozen"),
 		CommentsDisabled:               boolValue(record, "commentsDisabled"),
