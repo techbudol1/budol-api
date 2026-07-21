@@ -1377,6 +1377,146 @@ RETURN
 	return result.(Trade), nil
 }
 
+func (s *MemgraphUserStore) ReserveDirectTradePayout(ctx context.Context, userID string, tradeID string) (Trade, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rows, err := tx.Run(ctx, `
+MATCH (u:User {id: $userID})-[:PLACED_TRADE]->(t:Trade {id: $tradeID})-[:ON_POLL]->(p:Poll)
+WHERE coalesce(t.payoutStatus, "") IN ["claimable", "claim_failed", "failed"]
+  AND coalesce(t.settlementPayout, 0.0) > 0
+SET t.payoutStatus = "claim_pending",
+  t.payoutError = "",
+  t.publicClaimStartedAt = $now,
+  t.updatedAt = $now
+RETURN
+  t.id AS id,
+  t.userId AS userId,
+  coalesce(u.walletAddress, "") AS userWalletAddress,
+  p.id AS pollId,
+  p.slug AS pollSlug,
+  p.title AS pollTitle,
+  t.side AS side,
+  t.outcomeLabel AS outcomeLabel,
+  t.priceCents AS priceCents,
+  t.amount AS amount,
+  t.shares AS shares,
+  t.potentialPayout AS potentialPayout,
+  t.status AS status,
+  coalesce(t.escrowTxHash, "") AS escrowTxHash,
+  CASE WHEN coalesce(t.escrowStatus, "") <> "" THEN t.escrowStatus WHEN coalesce(t.escrowTxHash, "") <> "" THEN "verified" ELSE "" END AS escrowStatus,
+  coalesce(t.escrowVerifiedAt, "") AS escrowVerifiedAt,
+  coalesce(t.escrowFrom, "") AS escrowFrom,
+  coalesce(t.escrowTo, "") AS escrowTo,
+  coalesce(t.escrowAmount, t.amount, 0.0) AS escrowAmount,
+  coalesce(t.escrowError, "") AS escrowError,
+  coalesce(t.settlementStatus, "") AS settlementStatus,
+  coalesce(t.settlementOutcome, "") AS settlementOutcome,
+  coalesce(t.settlementPayout, 0.0) AS settlementPayout,
+  coalesce(t.payoutStatus, "") AS payoutStatus,
+  coalesce(t.payoutError, "") AS payoutError,
+  coalesce(t.payoutTransactionIds, []) AS payoutTransactionIds,
+  coalesce(t.privateClaimLeaf, "") AS privateClaimLeaf,
+  coalesce(t.privateClaimLeafIndex, -1) AS privateClaimLeafIndex,
+  coalesce(t.privateClaimRoot, "") AS privateClaimRoot,
+  coalesce(t.privateClaimNullifierHash, "") AS privateClaimNullifierHash,
+  coalesce(t.privateClaimId, "") AS privateClaimId,
+  coalesce(t.settledAt, "") AS settledAt,
+  t.createdAt AS createdAt
+`, map[string]any{"now": now, "tradeID": tradeID, "userID": userID})
+		if err != nil {
+			return nil, err
+		}
+		if rows.Next(ctx) {
+			return tradeFromRecord(rows.Record()), nil
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, errors.New("trade is not ready for public claim")
+	})
+	if err != nil {
+		return Trade{}, err
+	}
+	return result.(Trade), nil
+}
+
+func (s *MemgraphUserStore) CompleteDirectTradePayout(ctx context.Context, userID string, tradeID string, transactionIDs []string, payoutStatus string, payoutError string) (Trade, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	payoutStatus = defaultString(payoutStatus, "submitted")
+	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
+	defer session.Close(ctx)
+
+	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
+		rows, err := tx.Run(ctx, `
+MATCH (u:User {id: $userID})-[:PLACED_TRADE]->(t:Trade {id: $tradeID})-[:ON_POLL]->(p:Poll)
+WHERE coalesce(t.payoutStatus, "") IN ["claim_pending", "failed", "claim_failed"]
+SET t.payoutStatus = $payoutStatus,
+  t.payoutError = $payoutError,
+  t.payoutTransactionIds = $transactionIDs,
+  t.publicClaimCompletedAt = $now,
+  t.updatedAt = $now
+RETURN
+  t.id AS id,
+  t.userId AS userId,
+  coalesce(u.walletAddress, "") AS userWalletAddress,
+  p.id AS pollId,
+  p.slug AS pollSlug,
+  p.title AS pollTitle,
+  t.side AS side,
+  t.outcomeLabel AS outcomeLabel,
+  t.priceCents AS priceCents,
+  t.amount AS amount,
+  t.shares AS shares,
+  t.potentialPayout AS potentialPayout,
+  t.status AS status,
+  coalesce(t.escrowTxHash, "") AS escrowTxHash,
+  CASE WHEN coalesce(t.escrowStatus, "") <> "" THEN t.escrowStatus WHEN coalesce(t.escrowTxHash, "") <> "" THEN "verified" ELSE "" END AS escrowStatus,
+  coalesce(t.escrowVerifiedAt, "") AS escrowVerifiedAt,
+  coalesce(t.escrowFrom, "") AS escrowFrom,
+  coalesce(t.escrowTo, "") AS escrowTo,
+  coalesce(t.escrowAmount, t.amount, 0.0) AS escrowAmount,
+  coalesce(t.escrowError, "") AS escrowError,
+  coalesce(t.settlementStatus, "") AS settlementStatus,
+  coalesce(t.settlementOutcome, "") AS settlementOutcome,
+  coalesce(t.settlementPayout, 0.0) AS settlementPayout,
+  coalesce(t.payoutStatus, "") AS payoutStatus,
+  coalesce(t.payoutError, "") AS payoutError,
+  coalesce(t.payoutTransactionIds, []) AS payoutTransactionIds,
+  coalesce(t.privateClaimLeaf, "") AS privateClaimLeaf,
+  coalesce(t.privateClaimLeafIndex, -1) AS privateClaimLeafIndex,
+  coalesce(t.privateClaimRoot, "") AS privateClaimRoot,
+  coalesce(t.privateClaimNullifierHash, "") AS privateClaimNullifierHash,
+  coalesce(t.privateClaimId, "") AS privateClaimId,
+  coalesce(t.settledAt, "") AS settledAt,
+  t.createdAt AS createdAt
+`, map[string]any{
+			"now":            now,
+			"payoutError":    strings.TrimSpace(payoutError),
+			"payoutStatus":   strings.TrimSpace(payoutStatus),
+			"tradeID":        tradeID,
+			"transactionIDs": transactionIDs,
+			"userID":         userID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if rows.Next(ctx) {
+			return tradeFromRecord(rows.Record()), nil
+		}
+		if err := rows.Err(); err != nil {
+			return nil, err
+		}
+		return nil, errors.New("trade payout could not be completed")
+	})
+	if err != nil {
+		return Trade{}, err
+	}
+	return result.(Trade), nil
+}
+
 func (s *MemgraphUserStore) UpdateTradeEscrowReconciliation(ctx context.Context, id string, status string, errorMessage string, verifiedAt string, from string, to string, amount float64) (Trade, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	if verifiedAt == "" && status == "verified" {

@@ -273,6 +273,8 @@ type AdminStore interface {
 	PrivateClaimTree(ctx context.Context, pollID string) (PrivateClaimTree, error)
 	RecordPrivateClaimRoot(ctx context.Context, pollID string, root string, leafCount int64, reason string) (PrivateClaimRootSnapshot, error)
 	PrivateClaimRootHistory(ctx context.Context, pollID string, limit int64) ([]PrivateClaimRootSnapshot, error)
+	ReserveDirectTradePayout(ctx context.Context, userID string, tradeID string) (Trade, error)
+	CompleteDirectTradePayout(ctx context.Context, userID string, tradeID string, transactionIDs []string, payoutStatus string, payoutError string) (Trade, error)
 	ReservePrivateClaim(ctx context.Context, userID string, tradeID string, leaf string, root string, nullifierHash string, zkProofSubmissionID string) (PrivateClaim, Trade, error)
 	RecordPrivateClaimRegistryTransaction(ctx context.Context, userID string, claimID string, transactionID string, registryStatus string, registryError string) (PrivateClaim, Trade, error)
 	CompletePrivateClaimPayout(ctx context.Context, userID string, claimID string, transactionIDs []string, payoutStatus string, payoutError string) (PrivateClaim, Trade, error)

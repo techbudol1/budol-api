@@ -198,6 +198,46 @@ func (s Server) privateClaimArtifact(c *fiber.Ctx) error {
 	return c.SendFile(path)
 }
 
+func (s Server) claimPublicPayout(c *fiber.Ctx) error {
+	user, err := s.authenticatedUser(c)
+	if err != nil {
+		return err
+	}
+	tradeID := strings.TrimSpace(c.Params("id"))
+	if tradeID == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "trade id is required")
+	}
+	trade, err := s.store.ReserveDirectTradePayout(c.Context(), user.ID, tradeID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, err.Error())
+	}
+	result, _, payoutErr := s.sendWalletTokensWithRelease(c, []walletRecipientInput{
+		{Address: user.WalletAddress, Amount: settlementAmountString(trade.SettlementPayout)},
+	}, trade.SettlementPayout)
+	if payoutErr != nil {
+		_, _ = s.store.CompleteDirectTradePayout(c.Context(), user.ID, trade.ID, nil, "failed", payoutErr.Error())
+		return fiber.NewError(fiber.StatusBadGateway, payoutErr.Error())
+	}
+	payoutStatus, payoutError := s.waitForWalletOpsTransactionStatus(c, result.TransactionIDs)
+	trade, err = s.store.CompleteDirectTradePayout(c.Context(), user.ID, trade.ID, result.TransactionIDs, payoutStatus, payoutError)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to record public payout")
+	}
+	_, _ = s.store.CreateNotification(c.Context(), user.ID, "public_claim", "BUDOL payout claimed", trade.PollTitle+": "+settlementAmountString(trade.SettlementPayout)+" BUDOL direct payout status is "+payoutStatus+".", "/portfolio")
+	portfolio, err := s.store.UserPortfolio(c.Context(), user.ID)
+	if err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "failed to load portfolio")
+	}
+	return c.JSON(fiber.Map{
+		"portfolio":      portfolio,
+		"trade":          trade,
+		"payoutStatus":   payoutStatus,
+		"payoutError":    payoutError,
+		"payoutMode":     "direct",
+		"transactionIds": result.TransactionIDs,
+	})
+}
+
 func (s Server) claimPrivatePayout(c *fiber.Ctx) error {
 	user, err := s.authenticatedUser(c)
 	if err != nil {
