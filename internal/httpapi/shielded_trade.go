@@ -58,6 +58,10 @@ type shieldedTradeRequest struct {
 	PublicSignals        []string           `json:"publicSignals"`
 }
 
+type shieldedTradeBatchRequest struct {
+	Amount float64 `json:"amount"`
+}
+
 func (s Server) shieldedTradeConfig(c *fiber.Ctx) error {
 	c.Set("Cache-Control", "no-store")
 	items := make([]fiber.Map, 0, len(s.cfg.ShieldedTradeVaults))
@@ -108,6 +112,39 @@ func (s Server) shieldedTradeArtifact(c *fiber.Ctx) error {
 		c.Type("application/json")
 	}
 	return c.SendFile(path)
+}
+
+func (s Server) ensureShieldedTradeBatch(c *fiber.Ctx) error {
+	if !s.cfg.ShieldedTradingEnabled {
+		return fiber.NewError(fiber.StatusServiceUnavailable, "shielded trading is not enabled")
+	}
+	if _, err := s.authenticatedUser(c); err != nil {
+		return err
+	}
+	var request shieldedTradeBatchRequest
+	if err := c.BodyParser(&request); err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "invalid JSON body")
+	}
+	if err := validateFixedTradeAmount(request.Amount); err != nil {
+		return err
+	}
+	vault, ok := s.shieldedTradeVaultForAmount(request.Amount, s.engineTradingFeeBps(c.Context()))
+	if !ok {
+		return fiber.NewError(fiber.StatusConflict, "no shielded vault supports this amount and active fee schedule")
+	}
+
+	s.shieldedTradeMu.Lock()
+	defer s.shieldedTradeMu.Unlock()
+	if batch, found, err := s.store.CurrentShieldedTradeBatch(c.Context(), vault.VaultAddress, time.Now().UTC()); err != nil {
+		return fiber.NewError(fiber.StatusInternalServerError, "could not read the current shielded batch")
+	} else if found {
+		return c.JSON(fiber.Map{"batch": batch})
+	}
+	batch, err := s.openShieldedTradeBatch(c.Context(), vault)
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadGateway, "could not open a shielded batch: "+err.Error())
+	}
+	return c.Status(fiber.StatusCreated).JSON(fiber.Map{"batch": batch})
 }
 
 func shieldedTradeArtifactPath(file string) (string, error) {
@@ -302,14 +339,6 @@ func (s Server) processShieldedTradeBatches(ctx context.Context) {
 		return
 	}
 	defer s.shieldedTradeMu.Unlock()
-	for _, vault := range s.cfg.ShieldedTradeVaults {
-		if vault.FeeBps != s.engineTradingFeeBps(ctx) {
-			continue
-		}
-		if _, ok, _ := s.store.CurrentShieldedTradeBatch(ctx, vault.VaultAddress, time.Now().UTC()); !ok {
-			_, _ = s.openShieldedTradeBatch(ctx, vault)
-		}
-	}
 	due, err := s.store.ListDueShieldedTradeBatches(ctx, time.Now().UTC())
 	if err != nil {
 		return

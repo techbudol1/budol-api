@@ -334,6 +334,7 @@ func New(cfg config.Config, userStore store.AdminStore, walletopsClient *walleto
 	api.Post("/trades/managed-escrow", tradeRateLimit, server.createManagedTradeEscrow)
 	api.Post("/trades", tradeRateLimit, server.createTrade)
 	api.Get("/shielded-trades/config", server.shieldedTradeConfig)
+	api.Post("/shielded-trades/batches", tradeRateLimit, server.ensureShieldedTradeBatch)
 	api.Post("/shielded-trades", tradeRateLimit, server.createShieldedTrade)
 	api.Post("/trades/:id/public-claim", tradeRateLimit, server.claimPublicPayout)
 	api.Get("/cashout-quote", server.cashoutQuote)

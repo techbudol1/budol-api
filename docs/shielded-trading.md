@@ -7,7 +7,9 @@ the coordinator. The coordinator pins the verification key, submits the proof
 to zkVerify, relays the same proof to the Horizen vault, and records the order as
 pending.
 
-After the batch delay, the worker settles the vault's aggregate collateral and
+The API opens a batch lazily when the first user requests a private trade for a
+supported denomination. It does not spend relayer gas continuously on empty
+batches. After the batch delay, the worker settles the vault's aggregate collateral and
 creates the corresponding market positions while public market reads are held
 behind a short publication lock. Public activity and holder statistics exclude
 the individual shielded trades; the final market odds reflect the batch total.
@@ -30,6 +32,8 @@ its immutable fee matches the active GMR Engine fee.
 ## Endpoints
 
 - `GET /api/shielded-trades/config`: active vaults and collecting batches.
+- `POST /api/shielded-trades/batches`: lazily open or return the current batch
+  for one supported trade amount.
 - `POST /api/shielded-trades`: validate, submit to zkVerify, relay on-chain, and
   queue a hidden order.
 - `GET /api/zk/shielded-trade/:file`: pinned proving artifacts.
@@ -41,4 +45,3 @@ observers. The coordinator receives plaintext order details and can correlate
 the authenticated user with the order. Confidential operator-side matching
 requires a TEE/FHE/MPC follow-up. Development proving artifacts must not be used
 for real value without a new ceremony and independent audit.
-
