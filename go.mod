@@ -28,6 +28,7 @@ require (
 	github.com/eino-contrib/jsonschema v1.0.3 // indirect
 	github.com/goph/emperror v0.17.2 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
+	github.com/iden3/go-iden3-crypto v0.0.17 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
 	github.com/klauspost/compress v1.17.9 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.9 // indirect

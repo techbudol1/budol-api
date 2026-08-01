@@ -235,6 +235,13 @@ type AdminStore interface {
 	QuoteTrade(ctx context.Context, input TradeInput) (TradeQuote, error)
 	CollateralRequirement(ctx context.Context) (CollateralRequirement, error)
 	CreateTrade(ctx context.Context, user User, input TradeInput) (Trade, error)
+	CreateShieldedTradeBatch(ctx context.Context, input ShieldedTradeBatchInput) (ShieldedTradeBatch, error)
+	CurrentShieldedTradeBatch(ctx context.Context, vault string, now time.Time) (ShieldedTradeBatch, bool, error)
+	ListDueShieldedTradeBatches(ctx context.Context, now time.Time) ([]ShieldedTradeBatch, error)
+	UpdateShieldedTradeBatch(ctx context.Context, batchID string, status string, transactionID string, transactionHash string, errorMessage string) (ShieldedTradeBatch, error)
+	CreateShieldedTradeOrder(ctx context.Context, input ShieldedTradeOrderInput) (ShieldedTradeOrder, error)
+	ListShieldedTradeOrders(ctx context.Context, batchID string) ([]ShieldedTradeOrder, error)
+	CompleteShieldedTradeOrder(ctx context.Context, id string, tradeID string, status string, errorMessage string) error
 	QuoteCashout(ctx context.Context, userID string, input CashoutInput) (CashoutQuote, error)
 	CashoutPosition(ctx context.Context, userID string, input CashoutInput, transactionIDs []string, payoutStatus string, payoutError string) (CashoutQuote, error)
 	UserPortfolio(ctx context.Context, userID string) (Portfolio, error)

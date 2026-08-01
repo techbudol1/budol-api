@@ -8,6 +8,7 @@ BudolPH API is the application backend for a privacy-aware prediction-market exp
 - Verifies BUDOL escrow transfers and coordinates settlement and payout requests with GMR Engine.
 - Supports direct self-custody wallets, sponsored permit flows, and configured ERC-4337 smart accounts.
 - Validates tZEN privacy-access receipts for opt-in hidden positions, private claims, and shielded payouts.
+- Coordinates fixed-denomination shielded deposits, Groth16 order proofs, relayed submissions, and delayed aggregate market updates.
 - Persists application state in Memgraph.
 
 The API does not keep user private keys. Signing and project-wallet transaction execution are delegated to GMR Vault through GMR Engine.
@@ -36,7 +37,7 @@ go run ./cmd/api
 
 The default local address is `http://localhost:8082`.
 
-See [HORIZEN_TESTNET_API.md](./HORIZEN_TESTNET_API.md) for chain and smart-account configuration. Supporting documents cover the human-reviewed News Scout workflow and private-claim lifecycle.
+See [HORIZEN_TESTNET_API.md](./HORIZEN_TESTNET_API.md) for chain and smart-account configuration and [docs/shielded-trading.md](./docs/shielded-trading.md) for the private-order coordinator, deployment variables, endpoints, and security boundary. Supporting documents also cover the human-reviewed News Scout workflow and private-claim lifecycle.
 
 ## Security boundaries
 

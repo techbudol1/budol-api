@@ -60,6 +60,13 @@ type Config struct {
 	ShieldedWithdrawalRelayerFee        string
 	ShieldedWithdrawalStaleProcessing   time.Duration
 	ShieldedWithdrawalMode              string
+	ShieldedTradingEnabled              bool
+	ShieldedTradeVaults                 []ShieldedTradeVault
+	ShieldedTradeBatchWindow            time.Duration
+	ShieldedTradeBatchExpiry            time.Duration
+	ShieldedTradePollInterval           time.Duration
+	ShieldedTradeZKVerifyDomainID       int64
+	ShieldedTradeVerificationKeyPath    string
 	WelcomeTokenChainID                 int
 	WelcomeTokenContract                string
 	WelcomeTokenAmount                  string
@@ -94,6 +101,14 @@ type Config struct {
 type ShieldedPayoutPool struct {
 	Denomination string
 	PoolAddress  string
+}
+
+// ShieldedTradeVault maps one public trade amount and fee schedule to a
+// fixed-denomination vault. Changing the fee schedule requires a new vault.
+type ShieldedTradeVault struct {
+	TradeAmount  string
+	FeeBps       int64
+	VaultAddress string
 }
 
 func Load() (Config, error) {
@@ -148,6 +163,12 @@ func Load() (Config, error) {
 		ShieldedWithdrawalRelayerFee:        env("SHIELDED_WITHDRAWAL_RELAYER_FEE", "0"),
 		ShieldedWithdrawalStaleProcessing:   time.Duration(envInt("SHIELDED_WITHDRAWAL_STALE_PROCESSING_SECONDS", 600)) * time.Second,
 		ShieldedWithdrawalMode:              strings.ToLower(env("SHIELDED_WITHDRAWAL_MODE", "zkverify")),
+		ShieldedTradingEnabled:              envBool("SHIELDED_TRADING_ENABLED", false),
+		ShieldedTradeBatchWindow:            time.Duration(envInt("SHIELDED_TRADE_BATCH_WINDOW_SECONDS", 120)) * time.Second,
+		ShieldedTradeBatchExpiry:            time.Duration(envInt("SHIELDED_TRADE_BATCH_EXPIRY_SECONDS", 900)) * time.Second,
+		ShieldedTradePollInterval:           time.Duration(envInt("SHIELDED_TRADE_POLL_INTERVAL_SECONDS", 10)) * time.Second,
+		ShieldedTradeZKVerifyDomainID:       int64(envInt("SHIELDED_TRADE_ZKVERIFY_DOMAIN_ID", 175)),
+		ShieldedTradeVerificationKeyPath:    env("SHIELDED_TRADE_VERIFICATION_KEY_PATH", "zk/shielded-trade/verification_key.json"),
 		WelcomeTokenChainID:                 envInt("WELCOME_TOKEN_CHAIN_ID", 2651420),
 		WelcomeTokenContract:                env("WELCOME_TOKEN_CONTRACT", "0x689513fb392e460c6d9225f911fce57fe50d6db4"),
 		WelcomeTokenAmount:                  env("WELCOME_TOKEN_AMOUNT", ""),
@@ -179,6 +200,7 @@ func Load() (Config, error) {
 		OpenAIModel:                         env("OPENAI_MODEL", "gpt-5.5"),
 	}
 	cfg.ShieldedPayoutPools = parseShieldedPayoutPools(os.Getenv("SHIELDED_PAYOUT_POOLS"), cfg.ShieldedPayoutDenomination, cfg.ShieldedPayoutPoolAddress)
+	cfg.ShieldedTradeVaults = parseShieldedTradeVaults(os.Getenv("SHIELDED_TRADE_VAULTS"))
 
 	if len(cfg.SessionSecret) < 32 {
 		return Config{}, errors.New("SESSION_SECRET must be at least 32 characters")
@@ -218,6 +240,25 @@ func Load() (Config, error) {
 	if cfg.ShieldedPayoutEnabled {
 		if err := validateShieldedPayoutConfig(cfg); err != nil {
 			return Config{}, err
+		}
+	}
+	if cfg.ShieldedTradingEnabled {
+		if cfg.GMREngineAPIBase == "" || cfg.GMREngineAPIKey == "" {
+			return Config{}, errors.New("GMR_ENGINE_API_BASE and GMR_ENGINE_API_KEY are required for shielded trading")
+		}
+		if len(cfg.ShieldedTradeVaults) == 0 {
+			return Config{}, errors.New("SHIELDED_TRADE_VAULTS is required when shielded trading is enabled")
+		}
+		if cfg.ShieldedTradeBatchWindow < 15*time.Second || cfg.ShieldedTradeBatchExpiry <= cfg.ShieldedTradeBatchWindow {
+			return Config{}, errors.New("shielded trade batch window must be at least 15 seconds and shorter than its expiry")
+		}
+		if cfg.ShieldedTradePollInterval <= 0 || cfg.ShieldedTradeZKVerifyDomainID <= 0 {
+			return Config{}, errors.New("shielded trade poll interval and zkVerify domain must be positive")
+		}
+		for _, vault := range cfg.ShieldedTradeVaults {
+			if !isPositiveDecimal(vault.TradeAmount) || vault.FeeBps < 0 || vault.FeeBps > 10000 || !isEVMAddress(vault.VaultAddress) {
+				return Config{}, errors.New("SHIELDED_TRADE_VAULTS entries must use amount@feeBps:0xVault")
+			}
 		}
 	}
 	if cfg.SmartWalletEnabled {
@@ -363,6 +404,32 @@ func parseShieldedPayoutPools(raw string, fallbackDenomination string, fallbackP
 		})
 	}
 	return pools
+}
+
+func parseShieldedTradeVaults(raw string) []ShieldedTradeVault {
+	vaults := []ShieldedTradeVault{}
+	for _, item := range splitCSV(raw) {
+		parts := strings.SplitN(item, ":", 2)
+		amountFee := strings.SplitN(strings.TrimSpace(parts[0]), "@", 2)
+		if len(parts) != 2 || len(amountFee) != 2 {
+			continue
+		}
+		feeBps, err := strconv.ParseInt(strings.TrimSpace(amountFee[1]), 10, 64)
+		if err != nil {
+			continue
+		}
+		vaults = append(vaults, ShieldedTradeVault{
+			TradeAmount:  strings.TrimSpace(amountFee[0]),
+			FeeBps:       feeBps,
+			VaultAddress: strings.ToLower(strings.TrimSpace(parts[1])),
+		})
+	}
+	return vaults
+}
+
+func isPositiveDecimal(value string) bool {
+	parsed, ok := new(big.Rat).SetString(strings.TrimSpace(value))
+	return ok && parsed.Sign() > 0
 }
 
 func isEVMAddress(value string) bool {

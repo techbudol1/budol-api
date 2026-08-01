@@ -27,6 +27,8 @@ type TradeInput struct {
 	EscrowTo         string  `json:"escrowTo"`
 	EscrowAmount     float64 `json:"escrowAmount"`
 	PrivateClaimLeaf string  `json:"privateClaimLeaf"`
+	PrivacyMode      string  `json:"privacyMode"`
+	ShieldedBatchID  string  `json:"shieldedBatchId"`
 }
 
 type TradeQuote struct {
@@ -124,6 +126,8 @@ type Trade struct {
 	PrivateClaimRoot      string   `json:"privateClaimRoot"`
 	PrivateClaimNullifier string   `json:"privateClaimNullifierHash"`
 	PrivateClaimID        string   `json:"privateClaimId"`
+	PrivacyMode           string   `json:"privacyMode"`
+	ShieldedBatchID       string   `json:"shieldedBatchId"`
 	SettledAt             string   `json:"settledAt"`
 	CreatedAt             string   `json:"createdAt"`
 }
@@ -367,13 +371,14 @@ func (s *MemgraphUserStore) CreateTrade(ctx context.Context, user User, input Tr
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	params := map[string]any{
-		"id":           uuid.NewString(),
-		"userID":       user.ID,
-		"pollID":       input.PollID,
-		"side":         side,
-		"amount":       roundMoney(input.Amount),
-		"escrowTxHash": escrowTxHash,
-		"now":          now,
+		"id":              uuid.NewString(),
+		"userID":          user.ID,
+		"pollID":          input.PollID,
+		"side":            side,
+		"amount":          roundMoney(input.Amount),
+		"escrowTxHash":    escrowTxHash,
+		"shieldedBatchID": strings.TrimSpace(input.ShieldedBatchID),
+		"now":             now,
 	}
 
 	session := s.driver.NewSession(ctx, neo4j.SessionConfig{AccessMode: neo4j.AccessModeWrite})
@@ -382,6 +387,7 @@ func (s *MemgraphUserStore) CreateTrade(ctx context.Context, user User, input Tr
 	result, err := session.ExecuteWrite(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		usedRows, err := tx.Run(ctx, `
 MATCH (t:Trade {escrowTxHash: $escrowTxHash})
+WHERE $shieldedBatchID = "" OR coalesce(t.shieldedBatchId, "") = ""
 RETURN count(t) AS used
 `, params)
 		if err != nil {
@@ -428,6 +434,8 @@ RETURN count(t) AS used
 			"escrowAmount":     roundMoney(input.EscrowAmount),
 			"escrowError":      "",
 			"privateClaimLeaf": strings.TrimSpace(input.PrivateClaimLeaf),
+			"privacyMode":      strings.TrimSpace(input.PrivacyMode),
+			"shieldedBatchID":  strings.TrimSpace(input.ShieldedBatchID),
 			"outcomeLabel":     quote.OutcomeLabel,
 			"priceCents":       quote.AveragePriceCents,
 			"spotPriceCents":   quote.SpotPriceCents,
@@ -475,6 +483,8 @@ CREATE (t:Trade {
   privateClaimRoot: "",
   privateClaimNullifierHash: "",
   privateClaimId: "",
+	privacyMode: $privacyMode,
+	shieldedBatchId: $shieldedBatchID,
   shares: $shares,
   potentialPayout: $potentialPayout,
   priceImpactCents: $priceImpactCents,
@@ -521,6 +531,8 @@ RETURN
   coalesce(t.privateClaimRoot, "") AS privateClaimRoot,
   coalesce(t.privateClaimNullifierHash, "") AS privateClaimNullifierHash,
   coalesce(t.privateClaimId, "") AS privateClaimId,
+	coalesce(t.privacyMode, "public") AS privacyMode,
+	coalesce(t.shieldedBatchId, "") AS shieldedBatchId,
   coalesce(t.settledAt, "") AS settledAt,
   t.createdAt AS createdAt
 `, writeParams)
@@ -1197,6 +1209,8 @@ RETURN
   coalesce(t.privateClaimRoot, "") AS privateClaimRoot,
   coalesce(t.privateClaimNullifierHash, "") AS privateClaimNullifierHash,
   coalesce(t.privateClaimId, "") AS privateClaimId,
+	coalesce(t.privacyMode, "public") AS privacyMode,
+	coalesce(t.shieldedBatchId, "") AS shieldedBatchId,
   coalesce(t.settledAt, "") AS settledAt,
   t.createdAt AS createdAt
 ORDER BY t.createdAt DESC
@@ -1295,6 +1309,8 @@ RETURN
   coalesce(t.privateClaimRoot, "") AS privateClaimRoot,
   coalesce(t.privateClaimNullifierHash, "") AS privateClaimNullifierHash,
   coalesce(t.privateClaimId, "") AS privateClaimId,
+	coalesce(t.privacyMode, "public") AS privacyMode,
+	coalesce(t.shieldedBatchId, "") AS shieldedBatchId,
   coalesce(t.settledAt, "") AS settledAt,
   t.createdAt AS createdAt
 ORDER BY t.createdAt DESC
@@ -1357,6 +1373,8 @@ RETURN
   coalesce(t.privateClaimRoot, "") AS privateClaimRoot,
   coalesce(t.privateClaimNullifierHash, "") AS privateClaimNullifierHash,
   coalesce(t.privateClaimId, "") AS privateClaimId,
+	coalesce(t.privacyMode, "public") AS privacyMode,
+	coalesce(t.shieldedBatchId, "") AS shieldedBatchId,
   coalesce(t.settledAt, "") AS settledAt,
   t.createdAt AS createdAt
 `, map[string]any{"id": id})
@@ -1423,6 +1441,8 @@ RETURN
   coalesce(t.privateClaimRoot, "") AS privateClaimRoot,
   coalesce(t.privateClaimNullifierHash, "") AS privateClaimNullifierHash,
   coalesce(t.privateClaimId, "") AS privateClaimId,
+	coalesce(t.privacyMode, "public") AS privacyMode,
+	coalesce(t.shieldedBatchId, "") AS shieldedBatchId,
   coalesce(t.settledAt, "") AS settledAt,
   t.createdAt AS createdAt
 `, map[string]any{"now": now, "tradeID": tradeID, "userID": userID})
@@ -1490,6 +1510,8 @@ RETURN
   coalesce(t.privateClaimRoot, "") AS privateClaimRoot,
   coalesce(t.privateClaimNullifierHash, "") AS privateClaimNullifierHash,
   coalesce(t.privateClaimId, "") AS privateClaimId,
+	coalesce(t.privacyMode, "public") AS privacyMode,
+	coalesce(t.shieldedBatchId, "") AS shieldedBatchId,
   coalesce(t.settledAt, "") AS settledAt,
   t.createdAt AS createdAt
 `, map[string]any{
@@ -1602,6 +1624,7 @@ func (s *MemgraphUserStore) MarketActivity(ctx context.Context, slug string) ([]
 	result, err := session.ExecuteRead(ctx, func(tx neo4j.ManagedTransaction) (any, error) {
 		rows, err := tx.Run(ctx, `
 MATCH (u:User)-[:PLACED_TRADE]->(t:Trade)-[:ON_POLL]->(p:Poll {slug: $slug})
+WHERE coalesce(t.privacyMode, "public") <> "shielded"
 RETURN
   t.id AS id,
   CASE
@@ -1647,6 +1670,7 @@ func (s *MemgraphUserStore) MarketStats(ctx context.Context, slug string) (Marke
 		rows, err := tx.Run(ctx, `
 MATCH (p:Poll {slug: $slug})
 OPTIONAL MATCH (u:User)-[:PLACED_TRADE]->(t:Trade {status: "open"})-[:ON_POLL]->(p)
+WHERE coalesce(t.privacyMode, "public") <> "shielded"
 WITH p,
   count(t) AS tradeCount,
   count(DISTINCT u) AS holderCount,
@@ -2290,6 +2314,8 @@ func tradeFromRecord(record *neo4j.Record) Trade {
 		PrivateClaimRoot:      stringValue(record, "privateClaimRoot"),
 		PrivateClaimNullifier: stringValue(record, "privateClaimNullifierHash"),
 		PrivateClaimID:        stringValue(record, "privateClaimId"),
+		PrivacyMode:           defaultString(stringValue(record, "privacyMode"), "public"),
+		ShieldedBatchID:       stringValue(record, "shieldedBatchId"),
 		SettledAt:             stringValue(record, "settledAt"),
 		CreatedAt:             stringValue(record, "createdAt"),
 	}

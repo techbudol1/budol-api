@@ -41,6 +41,8 @@ type Server struct {
 	sessions             session.Manager
 	walletBalanceCache   map[string]walletBalanceCacheEntry
 	walletBalanceCacheMu *sync.Mutex
+	shieldedTradeMu      *sync.Mutex
+	shieldedPublishMu    *sync.Mutex
 }
 
 const walletBalanceCacheTTL = 10 * time.Second
@@ -256,6 +258,8 @@ func New(cfg config.Config, userStore store.AdminStore, walletopsClient *walleto
 		sessions:             sessions,
 		walletBalanceCache:   map[string]walletBalanceCacheEntry{},
 		walletBalanceCacheMu: &sync.Mutex{},
+		shieldedTradeMu:      &sync.Mutex{},
+		shieldedPublishMu:    &sync.Mutex{},
 	}
 
 	app := fiber.New(fiber.Config{
@@ -287,6 +291,7 @@ func New(cfg config.Config, userStore store.AdminStore, walletopsClient *walleto
 		return nil
 	})
 	server.startShieldedWithdrawalWorker(workerCtx)
+	server.startShieldedTradeWorker(workerCtx)
 	server.startMarketAlertWorker(workerCtx)
 
 	api := app.Group("/api")
@@ -316,6 +321,7 @@ func New(cfg config.Config, userStore store.AdminStore, walletopsClient *walleto
 	api.Get("/polls/:slug/private-claim-tree", server.pollPrivateClaimTree)
 	api.Get("/zk/private-claim/:file", server.privateClaimArtifact)
 	api.Get("/zk/shielded-withdrawal/:file", server.shieldedWithdrawalArtifact)
+	api.Get("/zk/shielded-trade/:file", server.shieldedTradeArtifact)
 	api.Post("/polls/:slug/comments", server.createPollComment)
 	api.Post("/comments/:id/report", server.reportPollComment)
 	api.Get("/polls/:slug", server.publicPollDetail)
@@ -327,6 +333,8 @@ func New(cfg config.Config, userStore store.AdminStore, walletopsClient *walleto
 	api.Post("/trades/gasless-escrow", tradeRateLimit, server.createGaslessTradeEscrow)
 	api.Post("/trades/managed-escrow", tradeRateLimit, server.createManagedTradeEscrow)
 	api.Post("/trades", tradeRateLimit, server.createTrade)
+	api.Get("/shielded-trades/config", server.shieldedTradeConfig)
+	api.Post("/shielded-trades", tradeRateLimit, server.createShieldedTrade)
 	api.Post("/trades/:id/public-claim", tradeRateLimit, server.claimPublicPayout)
 	api.Get("/cashout-quote", server.cashoutQuote)
 	api.Post("/cashouts", server.cashoutPosition)
@@ -724,6 +732,8 @@ func (s Server) adminLogout(c *fiber.Ctx) error {
 }
 
 func (s Server) publicPolls(c *fiber.Ctx) error {
+	s.shieldedPublishMu.Lock()
+	defer s.shieldedPublishMu.Unlock()
 	polls, err := s.store.ListPolls(c.Context(), true)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to load polls")
@@ -732,6 +742,8 @@ func (s Server) publicPolls(c *fiber.Ctx) error {
 }
 
 func (s Server) publicPollDetail(c *fiber.Ctx) error {
+	s.shieldedPublishMu.Lock()
+	defer s.shieldedPublishMu.Unlock()
 	poll, ok, err := s.store.GetPollBySlug(c.Context(), c.Params("slug"), true)
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to load poll")
@@ -743,6 +755,8 @@ func (s Server) publicPollDetail(c *fiber.Ctx) error {
 }
 
 func (s Server) publicPollActivity(c *fiber.Ctx) error {
+	s.shieldedPublishMu.Lock()
+	defer s.shieldedPublishMu.Unlock()
 	activities, err := s.store.MarketActivity(c.Context(), c.Params("slug"))
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to load market activity")
@@ -751,6 +765,8 @@ func (s Server) publicPollActivity(c *fiber.Ctx) error {
 }
 
 func (s Server) publicPollStats(c *fiber.Ctx) error {
+	s.shieldedPublishMu.Lock()
+	defer s.shieldedPublishMu.Unlock()
 	stats, err := s.store.MarketStats(c.Context(), c.Params("slug"))
 	if err != nil {
 		return fiber.NewError(fiber.StatusInternalServerError, "failed to load market stats")
