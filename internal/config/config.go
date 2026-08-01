@@ -18,7 +18,6 @@ type Config struct {
 	AdminPassword                       string
 	AdminUsername                       string
 	AllowedOrigins                      []string
-	ArbitrumSepoliaRPCURL               string
 	WelcomeTokenRPCURL                  string
 	CollateralBufferBps                 int
 	CollateralGuaranteeEnabled          bool
@@ -105,10 +104,9 @@ func Load() (Config, error) {
 		AppEnv:                              env("APP_ENV", "development"),
 		AdminAPIKey:                         os.Getenv("ADMIN_API_KEY"),
 		AdminCookieName:                     env("ADMIN_COOKIE_NAME", "budol_admin_session"),
-		AdminPassword:                       env("ADMIN_PASSWORD", "MaryAnn1101"),
-		AdminUsername:                       env("ADMIN_USERNAME", "destrega"),
+		AdminPassword:                       os.Getenv("ADMIN_PASSWORD"),
+		AdminUsername:                       os.Getenv("ADMIN_USERNAME"),
 		AllowedOrigins:                      splitCSV(env("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")),
-		ArbitrumSepoliaRPCURL:               env("ARBITRUM_SEPOLIA_RPC_URL", "https://sepolia-rollup.arbitrum.io/rpc"),
 		WelcomeTokenRPCURL:                  env("WELCOME_TOKEN_RPC_URL", "https://horizen-testnet.rpc.caldera.xyz/http"),
 		CollateralBufferBps:                 envNonNegativeInt("COLLATERAL_BUFFER_BPS", 0),
 		CollateralGuaranteeEnabled:          envBool("COLLATERAL_GUARANTEE_ENABLED", false),
@@ -131,12 +129,12 @@ func Load() (Config, error) {
 		ZENPrivateClaimFee:                  env("ZEN_PRIVATE_CLAIM_FEE", "0"),
 		ZENShieldedPayoutFee:                env("ZEN_SHIELDED_PAYOUT_FEE", "0"),
 		PrivateClaimRegistryAddress:         os.Getenv("PRIVATE_CLAIM_REGISTRY_ADDRESS"),
-		PrivateClaimRegistryChainID:         envInt("PRIVATE_CLAIM_REGISTRY_CHAIN_ID", envInt("WELCOME_TOKEN_CHAIN_ID", 421614)),
+		PrivateClaimRegistryChainID:         envInt("PRIVATE_CLAIM_REGISTRY_CHAIN_ID", envInt("WELCOME_TOKEN_CHAIN_ID", 2651420)),
 		PrivateClaimRegistryRequired:        envBool("PRIVATE_CLAIM_REGISTRY_REQUIRED", false),
 		PrivateClaimRegistryConfirmTimeout:  time.Duration(envInt("PRIVATE_CLAIM_REGISTRY_CONFIRM_TIMEOUT_SECONDS", 90)) * time.Second,
 		ShieldedPayoutEnabled:               envBool("SHIELDED_PAYOUT_ENABLED", false),
 		ShieldedPayoutPoolAddress:           os.Getenv("SHIELDED_PAYOUT_POOL_ADDRESS"),
-		ShieldedPayoutPoolChainID:           envInt("SHIELDED_PAYOUT_POOL_CHAIN_ID", envInt("WELCOME_TOKEN_CHAIN_ID", 421614)),
+		ShieldedPayoutPoolChainID:           envInt("SHIELDED_PAYOUT_POOL_CHAIN_ID", envInt("WELCOME_TOKEN_CHAIN_ID", 2651420)),
 		ShieldedPayoutDenomination:          os.Getenv("SHIELDED_PAYOUT_DENOMINATION"),
 		ShieldedPayoutRequired:              envBool("SHIELDED_PAYOUT_REQUIRED", false),
 		ShieldedPayoutDirectFallback:        envBool("SHIELDED_PAYOUT_DIRECT_FALLBACK", false),
@@ -243,8 +241,8 @@ func Load() (Config, error) {
 		}
 	}
 	if cfg.IsProduction() {
-		if cfg.WelcomeTokenChainID == 421614 && !cfg.CollateralGuaranteeEnabled {
-			return Config{}, errors.New("COLLATERAL_GUARANTEE_ENABLED must be true in production on Arbitrum Sepolia")
+		if !cfg.CollateralGuaranteeEnabled {
+			return Config{}, errors.New("COLLATERAL_GUARANTEE_ENABLED must be true in production")
 		}
 		if len(cfg.AllowedOrigins) == 0 {
 			return Config{}, errors.New("ALLOWED_ORIGINS is required in production")
@@ -253,9 +251,6 @@ func Load() (Config, error) {
 			if origin == "*" {
 				return Config{}, errors.New("ALLOWED_ORIGINS cannot contain * in production")
 			}
-		}
-		if cfg.AdminUsername == "destrega" || cfg.AdminPassword == "MaryAnn1101" {
-			return Config{}, errors.New("change seeded admin credentials before production")
 		}
 		if strings.Contains(cfg.PublicAppURL, "localhost") || strings.Contains(cfg.PublicAPIURL, "localhost") {
 			return Config{}, errors.New("PUBLIC_APP_URL and PUBLIC_API_URL must not use localhost in production")

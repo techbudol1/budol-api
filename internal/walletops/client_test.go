@@ -38,7 +38,7 @@ func TestSendTokenSupportsMultipleRecipients(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatal(err)
 			}
-			if payload.ChainID != 421614 {
+			if payload.ChainID != 2651420 {
 				t.Fatalf("unexpected chain id: %d", payload.ChainID)
 			}
 			if len(payload.Recipients) != 2 {
@@ -54,7 +54,7 @@ func TestSendTokenSupportsMultipleRecipients(t *testing.T) {
 		secretKey: "secret",
 	}
 	result, err := client.SendToken(context.Background(), SendTokenRequest{
-		ChainID:      421614,
+		ChainID:      2651420,
 		TokenAddress: "0x12fF5d28F93c1CABDA4Bd0ddf8906FF7E4Df1c4e",
 		Recipients: []TokenRecipient{
 			{Address: "0x1111111111111111111111111111111111111111", Quantity: "100"},

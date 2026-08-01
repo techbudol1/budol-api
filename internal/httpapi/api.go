@@ -581,12 +581,12 @@ func (s Server) attemptWelcomeTokenGrant(c *fiber.Ctx, user store.User, grant st
 	}
 	nativeBalance, err := s.evm.NativeBalance(c.Context(), projectWallet.Address)
 	if err != nil || isZeroDecimalString(nativeBalance.Raw) {
-		message := "project wallet needs Arbitrum Sepolia ETH for gas"
+		message := "project wallet needs " + networkName(s.cfg.WelcomeTokenChainID) + " ETH for gas"
 		if err != nil {
 			message = err.Error()
 		}
 		updated, _ := s.store.UpdateTokenGrantStatus(c.Context(), grant.ID, "pending", nil, message, grantDetails)
-		_, _ = s.store.CreateNotification(c.Context(), user.ID, "welcome_tokens", "Welcome token grant pending", "BudolPH is waiting for the project wallet to be funded with Arbitrum Sepolia ETH for gas.", "/wallet")
+		_, _ = s.store.CreateNotification(c.Context(), user.ID, "welcome_tokens", "Welcome token grant pending", "BudolPH is waiting for the project wallet to be funded with "+networkName(s.cfg.WelcomeTokenChainID)+" ETH for gas.", "/wallet")
 		return updated
 	}
 	tokenBalance, err := s.evm.ERC20Balance(c.Context(), tokenContract, projectWallet.Address, s.cfg.WelcomeTokenDecimals)
@@ -3137,7 +3137,7 @@ func (s Server) welcomeGrantWalletHealth(c *fiber.Ctx) fiber.Map {
 	}
 	health["nativeBalance"] = nativeBalance
 	if isZeroDecimalString(nativeBalance.Raw) {
-		health["message"] = "Project wallet needs Arbitrum Sepolia ETH for gas"
+		health["message"] = "Project wallet needs " + networkName(s.cfg.WelcomeTokenChainID) + " ETH for gas"
 		return health
 	}
 	tokenBalance, err := s.evm.ERC20Balance(c.Context(), tokenContract, projectWallet.Address, s.cfg.WelcomeTokenDecimals)

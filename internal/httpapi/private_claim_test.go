@@ -45,8 +45,8 @@ func TestValidatePrivateClaimProofRequiresSubmittedStatus(t *testing.T) {
 
 func TestValidatePrivateClaimProofContextMatchesClaim(t *testing.T) {
 	server := Server{cfg: config.Config{
-		WelcomeTokenChainID:         421614,
-		WelcomeTokenContract:        "0x4f1211149760079b1dea3717d806467c2f744468",
+		WelcomeTokenChainID:         2651420,
+		WelcomeTokenContract:        "0x689513fb392e460c6d9225f911fce57fe50d6db4",
 		PrivateClaimRegistryAddress: "0x0000000000000000000000000000000000000001",
 	}}
 	trade := store.Trade{

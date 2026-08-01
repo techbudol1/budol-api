@@ -51,7 +51,7 @@ The frontend submits the proof through BudolPH:
 POST /api/private-claims/proof-submissions
 ```
 
-If `ZEN_PRIVATE_CLAIM_FEE` is greater than zero, the request must include `privacyReceiptTxHash`. BudolPH verifies that this native tZEN transaction was sent by the logged-in user's wallet to `ZEN_PRIVACY_ACCESS_FEE_COLLECTOR_ADDRESS` for at least the configured fee before forwarding the proof to GMR Engine/ZKVerify.
+If `ZEN_PRIVATE_CLAIM_FEE` is greater than zero, the request must include `privacyReceiptTxHash`. BudolPH verifies the configured tZEN payment against the authenticated wallet, configured collector, and required amount before forwarding the proof to GMR Engine/ZKVerify.
 
 BudolPH validates the proof public signals against the logged-in user's trade before forwarding the proof to GMR Engine/ZKVerify.
 
@@ -104,7 +104,7 @@ BudolPH now supports fixed-denomination shielded payout pools. In that mode, the
 
 ## Privacy Access Fees
 
-The MVP privacy-fee loop uses native tZEN transfers:
+The privacy-fee loop uses the configured tZEN payment path:
 
 - `ZEN_PRIVACY_ACCESS_FEE_COLLECTOR_ADDRESS`: collector wallet that receives privacy access fees.
 - `ZEN_HIDE_POSITION_FEE`: configured but not enforced yet because BudolPH does not currently publish user portfolio/trade-history pages to other users.
@@ -117,33 +117,27 @@ The public config endpoint is:
 GET /api/privacy-access/config
 ```
 
-Managed Google wallets pay the same native tZEN fees through GMR Engine Vault:
+Managed Google wallets use the same fee schedule through GMR Engine and GMR Vault:
 
 ```text
 POST /api/privacy-access/managed-fee
 ```
 
-BudolPH calls GMR Engine to broadcast a native tZEN transfer from the managed user wallet to the configured collector, then verifies the resulting transaction hash exactly like a self-custody payment.
+BudolPH asks GMR Engine to submit the configured payment from the managed wallet, then verifies the resulting transaction hash before continuing the privacy action.
 
 ## Current MVP Limitations
 
-- Hide-position is a planned paid privacy tier, but there is no public profile/trade-history surface to hide from yet. Until that exists, all trade notes are private-note capable by default and hide-position fee collection is not triggered.
+- Hide-position requires a public-facing activity surface to have a meaningful privacy effect. Keep it disabled when that surface is not enabled.
 - Browser claim notes are still critical. If the user loses the browser note and has no encrypted backup, they cannot generate the private claim or shielded withdrawal proof.
-- Self-custody users pay privacy tZEN fees from the browser. Managed Google wallets pay through GMR Engine Vault. Both paths require the paying wallet to have enough native tZEN for the fee and gas.
+- Self-custody users authorize privacy tZEN fees from the browser. Managed Google wallets use the configured managed-wallet route. Both paths require sufficient configured privacy-token and gas funding.
 - Shielded payouts only work when the payout amount can be exactly split across configured pool denominations. Unsupported amounts use direct fallback only if `SHIELDED_PAYOUT_DIRECT_FALLBACK=true`.
 - The checked-in ZK artifacts are development artifacts unless replaced with audited ceremony outputs and checksums before production.
 
-## Planned User Privacy Controls
+## User privacy controls
 
-Add a clear privacy control to the trade ticket before order confirmation:
+Privacy is opt-in. The interface must present the user with clear choices:
 
-- Default: public position and normal trade history.
-- Toggle: `Private position`
-  - Intended behavior: hide this trade/position from future public profile and public trade-history surfaces until market resolution.
-  - Fee: `ZEN_HIDE_POSITION_FEE`.
-  - Current blocker: BudolPH does not yet publish public user profiles or public trade-history pages, so there is nothing user-facing to hide yet.
-- Toggle or claim-time option: `Shielded payout`
-  - Intended behavior: if the trade wins, use the shielded payout note flow instead of a direct public payout where supported by configured denominations.
-  - Fee: `ZEN_SHIELDED_PAYOUT_FEE`.
-
-MVP sequencing: build the public profile/trade-history visibility model first, then expose the `Private position` toggle in the trade card. Until then, do not show a fake toggle that has no observable effect.
+- **Public position and normal claim:** no privacy fee; the normal market and payout path is used.
+- **Private claim:** requires the configured `ZEN_PRIVATE_CLAIM_FEE` and a valid proof.
+- **Shielded payout:** requires the configured `ZEN_SHIELDED_PAYOUT_FEE`; the payout is credited as fixed-denomination notes and later relayed to the selected recipient.
+- **Private position:** may be enabled only where the public activity surface can be redacted until resolution; its fee is `ZEN_HIDE_POSITION_FEE`.
