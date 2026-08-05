@@ -312,6 +312,7 @@ func New(cfg config.Config, userStore store.AdminStore, walletopsClient *walleto
 	api.Post("/auth/wallet/nonce", authRateLimit, server.walletLoginNonce)
 	api.Post("/auth/wallet/verify", authRateLimit, server.walletLoginVerify)
 	api.Get("/auth/me", server.me)
+	api.Get("/metrics", server.publicMetrics)
 	api.Patch("/account/profile", authRateLimit, server.updateAccountProfile)
 	api.Post("/auth/logout", server.logout)
 	api.Get("/polls", server.publicPolls)

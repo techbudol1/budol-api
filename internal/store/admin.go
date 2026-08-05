@@ -217,6 +217,7 @@ type AdminStore interface {
 	UserStore
 	EngineStore
 	ListUsers(ctx context.Context) ([]User, error)
+	PublicMetrics(ctx context.Context, now time.Time) (PublicMetricsSnapshot, error)
 	AdminUserDetail(ctx context.Context, id string) (AdminUserDetail, error)
 	UpdateUser(ctx context.Context, id string, input UserUpdateInput) (User, error)
 	ListPollClassifications(ctx context.Context) ([]PollClassification, error)
