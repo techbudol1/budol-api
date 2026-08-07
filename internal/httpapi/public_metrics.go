@@ -50,6 +50,7 @@ func (s Server) publicMetrics(c *fiber.Ctx) error {
 				"failedWithdrawals":     snapshot.FailedWithdrawals,
 				"withdrawalSuccessRate": withdrawalSuccessRate,
 			},
+			"pilot":       snapshot.Pilot,
 			"privacyNote": "All metrics are aggregated. Wallet addresses, recipients, claim notes, proofs, and individual activity are excluded.",
 		},
 	})

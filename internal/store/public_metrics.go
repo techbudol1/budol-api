@@ -28,6 +28,7 @@ type PublicMetricsSnapshot struct {
 	SevenDays            PublicMetricPeriod `json:"sevenDays"`
 	ThirtyDays           PublicMetricPeriod `json:"thirtyDays"`
 	Daily                []PublicMetricDay  `json:"daily"`
+	Pilot                PilotFunnel        `json:"pilot"`
 }
 
 type PublicMetricPeriod struct {
@@ -121,6 +122,11 @@ RETURN privateClaims,
 			return nil, err
 		}
 		snapshot.SevenDays, snapshot.ThirtyDays, snapshot.Daily = aggregateMetricTrades(now, events)
+		pilot, err := pilotFunnelFromTransaction(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
+		snapshot.Pilot = pilot
 		return snapshot, nil
 	})
 	if err != nil {

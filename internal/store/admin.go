@@ -218,6 +218,10 @@ type AdminStore interface {
 	EngineStore
 	ListUsers(ctx context.Context) ([]User, error)
 	PublicMetrics(ctx context.Context, now time.Time) (PublicMetricsSnapshot, error)
+	RecordPilotEvent(ctx context.Context, input PilotEventInput) error
+	CreatePilotFeedback(ctx context.Context, input PilotFeedbackInput) (PilotFeedback, error)
+	PilotOverview(ctx context.Context, feedbackLimit int64) (PilotOverview, error)
+	UpdatePilotFeedback(ctx context.Context, id string, status string, adminNote string) (PilotFeedback, bool, error)
 	AdminUserDetail(ctx context.Context, id string) (AdminUserDetail, error)
 	UpdateUser(ctx context.Context, id string, input UserUpdateInput) (User, error)
 	ListPollClassifications(ctx context.Context) ([]PollClassification, error)
